@@ -45,17 +45,16 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto" if torch.cuda.is_available() else None,
 )
 
-# ✅ Text-generation pipeline (optimized for factual responses)
+# ✅ Text-generation pipeline (Accelerate-compatible)
 pipe = pipeline(
     "text-generation",
     model=model,
     tokenizer=tokenizer,
-    max_new_tokens=256,          # smaller context = faster response
-    temperature=0.2,             # stable and factual
+    max_new_tokens=256,
+    temperature=0.2,
     top_p=0.9,
     repetition_penalty=1.1,
     do_sample=False,
-    device=0 if DEVICE == "cuda" else -1,
 )
 
 print("✅ Phi-3-Mini-4k-Instruct loaded successfully.\n")
