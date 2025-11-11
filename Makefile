@@ -27,6 +27,27 @@ logs-rbc:
 	@echo "📜 Showing latest RBC scraping logs..."
 	@tail -n 20 logs/scrape_rbc.log
 
+# =======================================================
+#  RBC DATASET FULL SETUP (SCRAPE → CLEAN → EMBED → INDEX)
+# =======================================================
+# Use this target to rebuild the entire dataset from scratch.
+# This includes:
+#  1. Scraping the latest RBC FAQ data
+#  2. Inspecting and cleaning the dataset
+#  3. Generating embeddings
+#  4. Building the FAISS index for retrieval
+#
+# Run with:
+#   make setup-data
+# =======================================================
+
+setup-data:
+	@echo "🔄 Rebuilding full RAG dataset (scrape → clean → embed → index)..."
+	make scrape-rbc
+	make inspect-rbc
+	python src/embeddings/generate_embeddings.py
+	python src/embeddings/build_faiss_index.py
+	@echo "✅ Dataset ready under /data/"
 
 # =======================================================
 #  RAG SYSTEM API AND FRONTEND
