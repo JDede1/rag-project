@@ -36,6 +36,7 @@ logs-rbc:
 # - run-ui:  Launches the web chat UI for user interaction.
 # - stop-api: Gracefully terminates any running backend instance.
 # - stop-ui:  Gracefully terminates any running frontend instance.
+# - sync-url: Syncs the latest Ngrok URL from Colab to generator.py.
 # - auto-clean-memory: Clears OS caches and swap before heavy model loads.
 # =======================================================
 
@@ -76,6 +77,11 @@ stop-ui:
 	else \
 		echo "⚠️  No RAG UI process found."; \
 	fi
+
+# Automatically sync latest Colab Ngrok URL to generator.py
+sync-url:
+	@echo "🔄 Syncing latest Ngrok URL from Colab Drive..."
+	@python src/utils/sync_colab_url.py
 
 # Clear OS caches and swap to reclaim memory before loading large models
 auto-clean-memory:
