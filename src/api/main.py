@@ -3,14 +3,13 @@ main.py
 -------------------------------------
 FastAPI RAG API:
 - Retrieves top-k FAQs from FAISS index
-- Generates grounded answers using LLaMA-3.1-8B-Instruct
+- Generates grounded answers using Phi-3-Mini-4k-Instruct (lazy-loaded)
 """
 
 import os
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from retrieval.search_engine import RbcRetriever
-from generation.generator import generate_answer
 import uvicorn
 import pandas as pd
 
@@ -19,7 +18,7 @@ import pandas as pd
 # ---------------------------------------------------------
 app = FastAPI(
     title="RBC RAG API",
-    description="Retrieval-Augmented Generation service powered by FAISS + LLaMA-3.1-8B",
+    description="Retrieval-Augmented Generation service powered by FAISS + Phi-3-Mini-4k-Instruct",
     version="1.0.0",
 )
 
@@ -38,6 +37,22 @@ print("🔹 Initializing retriever...")
 retriever = RbcRetriever()
 print("✅ Retriever ready.\n")
 
+# Lazy-load generator
+generator_loaded = False
+generate_answer = None
+
+
+def load_generator():
+    """Load the generator only when first needed."""
+    global generate_answer, generator_loaded
+    if not generator_loaded:
+        print("⚙️ Loading generator model (Phi-3-Mini-4k-Instruct)...")
+        from generation.generator import generate_answer as _generate_answer
+        generate_answer = _generate_answer
+        generator_loaded = True
+        print("✅ Generator model loaded.\n")
+
+
 # ---------------------------------------------------------
 # Health Check
 # ---------------------------------------------------------
@@ -46,8 +61,10 @@ def health():
     return {
         "status": "ok",
         "records": len(retriever.metadata),
-        "model": "meta-llama/Llama-3.1-8B-Instruct",
+        "model": "microsoft/Phi-3-Mini-4k-Instruct",
+        "generator_loaded": generator_loaded,
     }
+
 
 # ---------------------------------------------------------
 # Ask Endpoint (RAG)
@@ -59,7 +76,7 @@ def ask(
 ):
     """
     Step 1: Retrieve top-k FAQs  
-    Step 2: Generate grounded answer using LLaMA-3.1-8B  
+    Step 2: Generate grounded answer using Phi-3  
     Step 3: Return both retrieval context + generated answer
     """
     try:
@@ -67,10 +84,14 @@ def ask(
         results_df = retriever.search(query, top_k=top_k)
         retrieved_docs = results_df["answer"].tolist()
 
-        # 🧠 Step 2: Generate
+        # 🧠 Step 2: Lazy-load generator
+        if not generator_loaded:
+            load_generator()
+
+        # 🧠 Step 3: Generate
         answer = generate_answer(query, retrieved_docs)
 
-        # 📦 Step 3: Combine response
+        # 📦 Step 4: Combine response
         return {
             "query": query,
             "answer": answer,
@@ -79,6 +100,7 @@ def ask(
 
     except Exception as e:
         return {"error": str(e)}
+
 
 # ---------------------------------------------------------
 # Run Server
