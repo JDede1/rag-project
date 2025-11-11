@@ -1,0 +1,128 @@
+# =======================================================
+#  PYTHON AND ENVIRONMENT FILES
+# =======================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.swp
+*.bak
+*.old
+
+# Virtual environments
+venv/
+env/
+.venv/
+.conda/
+*.env
+*.venv
+*.egg-info/
+*.egg
+.eggs/
+.env/
+.envrc
+.DS_Store
+
+# Jupyter / Colab notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# System or editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+Thumbs.db
+
+# =======================================================
+#  DATA, LOGS, AND OUTPUT
+# =======================================================
+data/raw/
+data/processed/
+data/reports/
+logs/
+offload/
+__outputs__/
+__results__/
+
+# Large index and model artifacts
+data/index/*.npy
+data/index/*.index
+data/index/*.parquet
+*.faiss
+*.npy
+*.pt
+*.bin
+*.safetensors
+*.h5
+*.ckpt
+
+# =======================================================
+#  MODEL WEIGHTS AND CACHES
+# =======================================================
+# Hugging Face and Torch cache dirs
+~/.cache/
+~/.huggingface/
+~/.torch/
+~/.local/share/huggingface/
+~/.local/share/torch/
+
+# Local model storage
+models/
+checkpoints/
+cache/
+offload/
+
+# =======================================================
+#  KEYS AND TOKENS
+# =======================================================
+Keys/
+*.pem
+*.key
+*.token
+*.secrets
+*.json
+!src/**/*.json   # Allow structured app JSONs but not keys
+
+# =======================================================
+#  DEPLOYMENT & INFRASTRUCTURE
+# =======================================================
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+*.tfvars
+*.tfvars.json
+
+# Docker
+*.pid
+*.sock
+*.pid.lock
+docker-compose.override.yml
+.env.docker
+
+# =======================================================
+#  MISCELLANEOUS
+# =======================================================
+# Lock files (optional to commit)
+requirements.lock
+poetry.lock
+Pipfile.lock
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# =======================================================
+#  PROJECT-SPECIFIC EXCLUSIONS
+# =======================================================
+# Logs and inspection outputs
+logs/scrape_rbc.log
+data/reports/rbc_faqs_report.md
+
+# Temporary visualization or test files
+test_outputs/
+tmp/
+notebooks/

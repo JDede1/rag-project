@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RBC Virtual Assistant 💬</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h1>💬 RBC Virtual Banking Assistant</h1>
+
+    <form method="post" action="/ask">
+      <input type="text" name="query" placeholder="Ask your question..." value="{{ query or '' }}" required autofocus>
+      <button type="submit">Ask</button>
+    </form>
+
+    {% if loading %}
+      <p class="loading">⏳ Generating answer... please wait.</p>
+    {% endif %}
+
+    {% if answer %}
+      <div class="response-box">
+        <h3>Answer:</h3>
+        <p>{{ answer }}</p>
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
