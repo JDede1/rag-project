@@ -1,7 +1,6 @@
 # 🧠 RAG Project  
 *A Retrieval-Augmented Generation (RAG) System for Canadian Banking FAQs — starting with RBC*  
 
-````markdown
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-ff4b4b?logo=streamlit)
@@ -10,7 +9,6 @@
 ![Phi3](https://img.shields.io/badge/Phi--3--Mini-4k--Instruct-blueviolet)
 ![Ngrok](https://img.shields.io/badge/Ngrok-Tunneling-black)
 ![GitHub](https://img.shields.io/badge/GitHub-VersionControl-black?logo=github)
-````
 
 ---
 
@@ -55,6 +53,7 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 ### 🔹 System Overview
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
     U[User<br/>Browser/Colab] --> S[Streamlit Chat UI<br/>(src/frontend/chat_ui.py)]
     S -->|HTTP /ask| A[FastAPI Backend<br/>(src/api/main.py)]
@@ -67,6 +66,7 @@ flowchart TB
 ### 🔹 Data Flow
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
     S1[data/raw/rbc/*.json] --> S2[data/processed/rbc_faqs.parquet]
     S2 --> S3[Sentence-Transformer Embeddings]
@@ -119,15 +119,22 @@ rag-project/
 
 ---
 
-## 🚀 Sprint Progress
+## 🚀 Sprint Progress Tracker
 
-| Sprint | Focus                     | Key Deliverables                                     |
-| ------ | ------------------------- | ---------------------------------------------------- |
-| **1**  | Environment Setup         | Installed dependencies, GPU config, folder structure |
-| **2**  | Data Ingestion            | RBC FAQ scraper (`scrape_rbc_faqs.py`)               |
-| **3**  | Preprocessing + Retrieval | Clean data, generate embeddings, build FAISS index   |
-| **4**  | Backend API               | FastAPI / ask endpoint + Phi-3 generator             |
-| **5**  | Frontend UI               | Streamlit chat interface + ngrok integration         |
+| Sprint | Description | Progress | Status |
+|:-------|:-------------|:----------|:--------|
+| 🏁 **Sprint 1** | Data Ingestion (RBC FAQ scraping) | 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩 **100%** | ✅ Completed |
+| 🧹 **Sprint 2** | Data Cleaning & Preprocessing | 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩 **100%** | ✅ Completed |
+| 🧭 **Sprint 3** | Embeddings & FAISS Retrieval | 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩 **100%** | ✅ Completed |
+| ⚙️ **Sprint 4** | Backend (FastAPI + RAG + Phi-3 Mini) | 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩 **100%** | ✅ Completed |
+| 💬 **Sprint 5** | Frontend (Streamlit Chat UI) | 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩 **100%** | ✅ Completed |
+| 📈 **Sprint 6** | Monitoring & Observability (WhyLogs + Evidently) | 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ **40%** | 🚧 In Progress |
+| ☁️ **Sprint 7** | GCP Cloud Deployment (Cloud Run + Terraform + CI/CD) | 🟩🟩⬜⬜⬜⬜⬜⬜⬜⬜ **20%** | ⏳ Planned |
+
+---
+
+### 🧩 Overall Project Completion:  
+**🟩🟩🟩🟩🟩🟩🟩⬜⬜⬜ 75% Complete**
 
 ---
 
@@ -171,7 +178,7 @@ print("Health:", requests.get(f"{backend_url.public_url}/health").json())
 
 ```python
 frontend_url = ngrok.connect(8501)
-print("💬 Streamlit Chat UI:", frontend_url.public_url)
+print("Streamlit Chat UI:", frontend_url.public_url)
 ```
 
 ---
@@ -253,6 +260,3 @@ You can instantly try the full RAG system (backend + frontend + ngrok tunnels) d
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/JDede1/rag-project/blob/main/notebooks/rag_colab_demo.ipynb)
 
 > 💡 *Tip:* The demo notebook automatically installs dependencies, launches both backend and frontend, and provides you with a live public Streamlit chat URL.
-
----
-
