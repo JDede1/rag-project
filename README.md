@@ -54,12 +54,12 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 
 ```mermaid
 flowchart TB
-    U["User\nBrowser / Colab"] --> S["Streamlit Chat UI\nsrc/frontend/chat_ui.py"]
-    S -->|HTTP /ask| A["FastAPI Backend\nsrc/api/main.py"]
-    A -->|Vector Search| R["RbcRetriever\nFAISS Index"]
-    R -->|Top-k Context| G["Phi-3 Mini Generator\nsrc/generation/generator.py"]
+    U["User\nBrowser"] --> S["Streamlit UI"]
+    S -->|/ask| A["FastAPI API"]
+    A -->|Search| R["Retriever\nFAISS"]
+    R -->|Context| G["Generator\nPhi-3 Mini"]
     G --> A --> S
-    S -->|Display Evidence| SB["Sidebar FAQ Viewer"]
+    S -->|Evidence| SB["FAQ Sidebar"]
 ```
 
 ---
@@ -68,10 +68,10 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    S1["data/raw/rbc/*.json"] --> S2["data/processed/rbc_faqs.parquet"]
-    S2 --> S3["Sentence-Transformer Embeddings"]
-    S3 --> S4["FAISS Index\nindex.faiss"]
-    S4 --> B["FastAPI Backend"]
+    S1["Raw JSON"] --> S2["Processed FAQs"]
+    S2 --> S3["Embeddings"]
+    S3 --> S4["FAISS Index"]
+    S4 --> B["Backend API"]
     B --> F["Streamlit UI"]
 ```
 
