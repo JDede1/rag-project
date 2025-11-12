@@ -75,7 +75,7 @@ flowchart LR
 
     %% Nodes
     A[Raw JSON<br/>Scraped RBC Data]:::box
-    B[Preprocessing<br/>Cleaning • Normalization • Splitting]:::box
+    B[Preprocessing<br/>Clean • Normalize • Split]:::box
     C[Embeddings<br/>SentenceTransformers]:::box
     D[FAISS Index<br/>Vector Store]:::box
     E[FastAPI Backend<br/>RAG Pipeline]:::box
