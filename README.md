@@ -50,11 +50,9 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 
 ## 🧭 Architecture
 
-### 🔹 System Overview
+### System Overview
 
-### *Caption:*
-
-**Shows how the user interacts with UI → backend → retriever → generator → evidence display.**
+Shows the full request flow: user → UI → backend → retriever → generator → UI.
 
 ```mermaid
 flowchart TB
@@ -66,12 +64,9 @@ flowchart TB
     S -->|Evidence| SB["FAQ Sidebar"]
 ```
 
----
+### Data Flow
 
-
-### *Caption:*
-
-**End-to-end flow: raw data → cleaned FAQ → embeddings → FAISS index → API → UI.**
+End-to-end movement from raw JSON → embeddings → FAISS index → API → UI.
 
 ```mermaid
 flowchart LR
@@ -82,28 +77,9 @@ flowchart LR
     API --> UI["Streamlit UI"]
 ```
 
----
+### Sequence Diagram
 
-
-### *Caption:*
-
-**Same diagram as above but simplified for dark theme (no colors allowed by GitHub).**
-
-```mermaid
-flowchart TB
-    U["User"] --> S["Streamlit UI"]
-    S --> A["FastAPI Backend"]
-    A --> R["Retriever (FAISS)"]
-    R --> G["Generator (Phi-3 Mini)"]
-    G --> A --> S --> SB["FAQ Sidebar"]
-```
-
----
-
-
-### *Caption:*
-
-**Timeline of events: question → search → generation → return.**
+Full query lifecycle from user → retrieval → answer.
 
 ```mermaid
 sequenceDiagram
@@ -117,56 +93,43 @@ sequenceDiagram
     U->>UI: Ask question
     UI->>API: POST /ask
     API->>RET: Search embeddings
-    RET-->>API: Return top-k context
-    API->>GEN: Send prompt + context
-    GEN-->>API: Return answer
-    API-->>UI: Deliver response
+    RET-->>API: Top-k results
+    API->>GEN: Context + prompt
+    GEN-->>API: Answer
+    API-->>UI: Response + evidence
     UI-->>U: Display result
 ```
 
 ---
 
-### *Caption:*
+### Caption
 
 **Animated arrows showing the progression from raw data → preprocessing → FAISS → backend → UI.**
 
-```html
 <p align="center">
 <svg width="600" height="140" xmlns="http://www.w3.org/2000/svg">
 
-  <!-- Boxes -->
   <rect x="20" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
   <rect x="170" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
   <rect x="320" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
   <rect x="470" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
 
-  <!-- Labels -->
-  <text x="45" y="75" font-size="13" font-family="sans-serif">Raw JSON</text>
-  <text x="185" y="75" font-size="13" font-family="sans-serif">Cleaned FAQs</text>
-  <text x="342" y="75" font-size="13" font-family="sans-serif">FAISS Index</text>
-  <text x="495" y="75" font-size="13" font-family="sans-serif">API → UI</text>
+<text x="45" y="75" font-size="13" font-family="sans-serif">Raw JSON</text> <text x="185" y="75" font-size="13" font-family="sans-serif">Cleaned FAQs</text> <text x="342" y="75" font-size="13" font-family="sans-serif">FAISS Index</text> <text x="495" y="75" font-size="13" font-family="sans-serif">API → UI</text>
 
-  <!-- Animated Arrow 1 -->
-  <line x1="140" y1="70" x2="170" y2="70" stroke="#6c757d" stroke-width="3">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
-    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  <line x1="140" y1="70" x2="170" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
   </line>
 
-  <!-- Animated Arrow 2 -->
-  <line x1="290" y1="70" x2="320" y2="70" stroke="#6c757d" stroke-width="3">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
-    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  <line x1="290" y1="70" x2="320" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
   </line>
 
-  <!-- Animated Arrow 3 -->
-  <line x1="440" y1="70" x2="470" y2="70" stroke="#6c757d" stroke-width="3">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
-    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  <line x1="440" y1="70" x2="470" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
   </line>
 
 </svg>
 </p>
-```
 
 ---
 
