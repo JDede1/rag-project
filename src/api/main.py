@@ -6,7 +6,10 @@ FastAPI RAG API:
 - Generates grounded answers using Phi-3-Mini-4k-Instruct (lazy-loaded)
 """
 
-import os
+import sys, os
+# ✅ Ensure Colab can import from src/ even when uvicorn runs
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from retrieval.search_engine import RbcRetriever
@@ -41,7 +44,6 @@ print("✅ Retriever ready.\n")
 generator_loaded = False
 generate_answer = None
 
-
 def load_generator():
     """Load the generator only when first needed."""
     global generate_answer, generator_loaded
@@ -51,7 +53,6 @@ def load_generator():
         generate_answer = _generate_answer
         generator_loaded = True
         print("✅ Generator model loaded.\n")
-
 
 # ---------------------------------------------------------
 # Health Check
@@ -64,7 +65,6 @@ def health():
         "model": "microsoft/Phi-3-Mini-4k-Instruct",
         "generator_loaded": generator_loaded,
     }
-
 
 # ---------------------------------------------------------
 # Ask Endpoint (RAG)
@@ -100,7 +100,6 @@ def ask(
 
     except Exception as e:
         return {"error": str(e)}
-
 
 # ---------------------------------------------------------
 # Run Server
