@@ -14,29 +14,31 @@ URL_FILE = "/content/rag-project/rag_llm_url.txt"
 if os.path.exists(URL_FILE):
     BACKEND_URL = open(URL_FILE).read().strip()
 else:
-    BACKEND_URL = st.secrets.get("RAG_BACKEND_URL", "http://localhost:8000")
+    BACKEND_URL = os.getenv("RAG_BACKEND_URL", "http://localhost:8000")
 
+# ✅ Streamlit Page Configuration
 st.set_page_config(page_title="💬 RBC RAG Assistant", layout="wide")
 
+# --- Header ---
 st.title("💬 RBC AI Assistant")
 st.caption("Ask questions about RBC banking FAQs")
 
-# Sidebar info
+# --- Sidebar ---
 st.sidebar.header("📚 Retrieved FAQ Evidence")
 st.sidebar.info("Relevant FAQs will appear here after you ask a question.")
 
-# Session state
+# --- Initialize session state ---
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 if "context_docs" not in st.session_state:
     st.session_state["context_docs"] = []
 
-# Display chat history
+# --- Display chat history ---
 for role, text in st.session_state["messages"]:
     with st.chat_message(role):
         st.markdown(text)
 
-# Input box
+# --- User Input ---
 if prompt := st.chat_input("Type your question here..."):
     st.session_state["messages"].append(("user", prompt))
     with st.chat_message("user"):
@@ -52,14 +54,15 @@ if prompt := st.chat_input("Type your question here..."):
         answer = f"⚠️ Connection error: {e}"
         context = []
 
-    # Display assistant response
+    # --- Display model response ---
     with st.chat_message("assistant"):
         st.markdown(answer)
 
+    # --- Save messages & evidence ---
     st.session_state["messages"].append(("assistant", answer))
     st.session_state["context_docs"] = context
 
-# Sidebar evidence panel
+# --- Sidebar Evidence Viewer ---
 if st.session_state["context_docs"]:
     for i, doc in enumerate(st.session_state["context_docs"], start=1):
         st.sidebar.markdown(f"**{i}. {doc['question']}**")
