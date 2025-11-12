@@ -131,3 +131,8 @@ logs/*
 Keys/*
 __pycache__/
 *.ipynb_checkpoints/
+data/*
+logs/*
+Keys/*
+__pycache__/
+*.ipynb_checkpoints/
