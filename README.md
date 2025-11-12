@@ -130,46 +130,40 @@ sequenceDiagram
 
 **Animated arrows showing the progression from raw data → preprocessing → FAISS → backend → UI.**
 
-> ✔ Works on GitHub (inline SVG with CSS animation)
-> ✔ Safe — no JS, no SMIL
-
 ```html
 <p align="center">
 <svg width="600" height="140" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    .pulse {
-      stroke-dasharray: 5;
-      animation: dash 1.2s linear infinite;
-    }
-    @keyframes dash {
-      to { stroke-dashoffset: -25; }
-    }
-    .box {
-      fill: #e9ecef;
-      stroke: #6c757d;
-      stroke-width: 1.4;
-      rx: 6;
-      ry: 6;
-    }
-    text { font-size: 13px; font-family: sans-serif; }
-  </style>
 
   <!-- Boxes -->
-  <rect class="box" x="20" y="50" width="120" height="40"/>
-  <rect class="box" x="170" y="50" width="120" height="40"/>
-  <rect class="box" x="320" y="50" width="120" height="40"/>
-  <rect class="box" x="470" y="50" width="120" height="40"/>
+  <rect x="20" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
+  <rect x="170" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
+  <rect x="320" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
+  <rect x="470" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
 
   <!-- Labels -->
-  <text x="45" y="75">Raw JSON</text>
-  <text x="185" y="75">Cleaned FAQs</text>
-  <text x="342" y="75">FAISS Index</text>
-  <text x="495" y="75">API → UI</text>
+  <text x="45" y="75" font-size="13" font-family="sans-serif">Raw JSON</text>
+  <text x="185" y="75" font-size="13" font-family="sans-serif">Cleaned FAQs</text>
+  <text x="342" y="75" font-size="13" font-family="sans-serif">FAISS Index</text>
+  <text x="495" y="75" font-size="13" font-family="sans-serif">API → UI</text>
 
-  <!-- Animated Arrows -->
-  <line x1="140" y1="70" x2="170" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
-  <line x1="290" y1="70" x2="320" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
-  <line x1="440" y1="70" x2="470" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
+  <!-- Animated Arrow 1 -->
+  <line x1="140" y1="70" x2="170" y2="70" stroke="#6c757d" stroke-width="3">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
+    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  </line>
+
+  <!-- Animated Arrow 2 -->
+  <line x1="290" y1="70" x2="320" y2="70" stroke="#6c757d" stroke-width="3">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
+    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  </line>
+
+  <!-- Animated Arrow 3 -->
+  <line x1="440" y1="70" x2="470" y2="70" stroke="#6c757d" stroke-width="3">
+    <animate attributeName="stroke-dashoffset" values="0;-20" dur="1s" repeatCount="indefinite"/>
+    <animate attributeName="stroke-dasharray" values="4,4" dur="0.01s" repeatCount="1"/>
+  </line>
+
 </svg>
 </p>
 ```
