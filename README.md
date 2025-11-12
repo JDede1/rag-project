@@ -53,26 +53,26 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 ### 🔹 System Overview
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 flowchart TB
-    U[User<br/>Browser/Colab] --> S[Streamlit Chat UI<br/>(src/frontend/chat_ui.py)]
-    S -->|HTTP /ask| A[FastAPI Backend<br/>(src/api/main.py)]
-    A -->|Vector Search| R[RbcRetriever<br/>FAISS Index]
-    R -->|Top-k Context| G[Phi-3 Mini Generator<br/>(src/generation/generator.py)]
+    U["User\nBrowser / Colab"] --> S["Streamlit Chat UI\nsrc/frontend/chat_ui.py"]
+    S -->|HTTP /ask| A["FastAPI Backend\nsrc/api/main.py"]
+    A -->|Vector Search| R["RbcRetriever\nFAISS Index"]
+    R -->|Top-k Context| G["Phi-3 Mini Generator\nsrc/generation/generator.py"]
     G --> A --> S
-    S -->|Display Evidence| SB[Sidebar FAQ Viewer]
+    S -->|Display Evidence| SB["Sidebar FAQ Viewer"]
 ```
+
+---
 
 ### 🔹 Data Flow
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 flowchart LR
-    S1[data/raw/rbc/*.json] --> S2[data/processed/rbc_faqs.parquet]
-    S2 --> S3[Sentence-Transformer Embeddings]
-    S3 --> S4[FAISS Index (index.faiss)]
-    S4 --> B[FastAPI Backend]
-    B --> F[Streamlit UI]
+    S1["data/raw/rbc/*.json"] --> S2["data/processed/rbc_faqs.parquet"]
+    S2 --> S3["Sentence-Transformer Embeddings"]
+    S3 --> S4["FAISS Index\nindex.faiss"]
+    S4 --> B["FastAPI Backend"]
+    B --> F["Streamlit UI"]
 ```
 
 ---
