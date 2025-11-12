@@ -126,3 +126,8 @@ data/reports/rbc_faqs_report.md
 test_outputs/
 tmp/
 notebooks/
+data/*
+logs/*
+Keys/*
+__pycache__/
+*.ipynb_checkpoints/
