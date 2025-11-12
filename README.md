@@ -54,78 +54,48 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 
 ### *Caption:*
 
-**High-level view of how the user, UI, backend, retriever, and generator interact during a query.**
+**Shows how the user interacts with UI → backend → retriever → generator → evidence display.**
 
 ```mermaid
 flowchart TB
-    classDef user fill=#fdf6b2,stroke=#c3a34a,color=#654321;
-    classDef ui fill=#d1fae5,stroke=#059669,color=#065f46;
-    classDef api fill=#bfdbfe,stroke=#1d4ed8,color=#1e3a8a;
-    classDef retriever fill=#fde68a,stroke=#d97706,color=#92400e;
-    classDef generator fill=#e9d5ff,stroke=#7e22ce,color=#5b21b6;
-    classDef sidebar fill=#fce7f3,stroke=#be185d,color=#9d174d;
-
-    U["👤 User<br>Browser"]:::user
-    S["💬 Streamlit UI"]:::ui
-    A["⚡ FastAPI<br>Backend"]:::api
-    R["🔍 Retriever<br>FAISS"]:::retriever
-    G["🧠 Generator<br>Phi-3 Mini"]:::generator
-    SB["📑 FAQ<br>Sidebar"]:::sidebar
-
-    U ==> S
-    S ==>|"HTTP /ask"| A
-    A ==>|"Vector Search"| R
-    R ==>|"Top-k Context"| G
-    G ==> A ==> S
-    S ==>|"Evidence"| SB
+    U["User<br>Browser"] --> S["Streamlit UI"]
+    S -->|HTTP /ask| A["FastAPI Backend"]
+    A -->|Vector Search| R["Retriever<br>FAISS"]
+    R -->|Context| G["Generator<br>Phi-3 Mini"]
+    G --> A --> S
+    S -->|Evidence| SB["FAQ Sidebar"]
 ```
 
 ---
 
+
 ### *Caption:*
 
-**Shows preprocessing → embeddings → FAISS indexing → query serving → UI.**
+**End-to-end flow: raw data → cleaned FAQ → embeddings → FAISS index → API → UI.**
 
 ```mermaid
 flowchart LR
-    classDef data fill=#fef3c7,stroke=#d97706,color=#92400e;
-    classDef embed fill=#ddd6fe,stroke=#5b21b6,color=#4c1d95;
-    classDef api fill=#bfdbfe,stroke=#1d4ed8,color=#1e3a8a;
-    classDef ui fill=#d1fae5,stroke=#059669,color=#065f46;
-
-    RAW["📘 Raw<br>JSON"]:::data
-    CLEAN["📗 Cleaned<br>FAQs"]:::data
-    EMBED["✨ Embeddings"]:::embed
-    INDEX["📦 FAISS<br>Index"]:::embed
-    API["⚡ FastAPI<br>Backend"]:::api
-    UI["💬 Streamlit<br>UI"]:::ui
-
-    RAW --> CLEAN --> EMBED --> INDEX --> API --> UI
+    RAW["Raw JSON"] --> CLEAN["Cleaned FAQs"]
+    CLEAN --> EMBED["Embeddings"]
+    EMBED --> INDEX["FAISS Index"]
+    INDEX --> API["FastAPI Backend"]
+    API --> UI["Streamlit UI"]
 ```
 
 ---
 
+
 ### *Caption:*
 
-**Adjusted contrast so diagram looks perfect in GitHub dark mode.**
+**Same diagram as above but simplified for dark theme (no colors allowed by GitHub).**
 
 ```mermaid
 flowchart TB
-    classDef user fill=#fff3cd,stroke=#856404,color=#533f03;
-    classDef ui fill=#c8f7dc,stroke=#0b7a44,color=#064b2d;
-    classDef api fill=#cce5ff,stroke=#004085,color=#002752;
-    classDef retriever fill=#ffeeba,stroke=#8a6d3b,color=#5f4621;
-    classDef generator fill=#e2d9f3,stroke=#6f42c1,color=#4b2c8c;
-    classDef sidebar fill=#f8d7da,stroke=#721c24,color=#491217;
-
-    U["👤 User"]:::user
-    S["💬 Streamlit UI"]:::ui
-    A["⚡ FastAPI<br>Backend"]:::api
-    R["🔍 Retriever<br>FAISS"]:::retriever
-    G["🧠 Generator<br>Phi-3 Mini"]:::generator
-    SB["📑 FAQ<br>Sidebar"]:::sidebar
-
-    U --> S --> A --> R --> G --> A --> S --> SB
+    U["User"] --> S["Streamlit UI"]
+    S --> A["FastAPI Backend"]
+    A --> R["Retriever (FAISS)"]
+    R --> G["Generator (Phi-3 Mini)"]
+    G --> A --> S --> SB["FAQ Sidebar"]
 ```
 
 ---
@@ -133,22 +103,22 @@ flowchart TB
 
 ### *Caption:*
 
-**Step-by-step timeline from question → retrieval → generation → response.**
+**Timeline of events: question → search → generation → return.**
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as 👤 User
-    participant UI as 💬 Streamlit UI
-    participant API as ⚡ FastAPI Backend
-    participant RET as 🔍 Retriever (FAISS)
-    participant GEN as 🧠 Phi-3 Mini
+    participant U as User
+    participant UI as Streamlit UI
+    participant API as FastAPI Backend
+    participant RET as Retriever (FAISS)
+    participant GEN as Phi-3 Mini
 
     U->>UI: Ask question
     UI->>API: POST /ask
     API->>RET: Search embeddings
     RET-->>API: Return top-k context
-    API->>GEN: Send context + prompt
+    API->>GEN: Send prompt + context
     GEN-->>API: Return answer
     API-->>UI: Deliver response
     UI-->>U: Display result
@@ -158,24 +128,26 @@ sequenceDiagram
 
 ### *Caption:*
 
-**Lightweight SVG animation showing the flow of data from → preprocessing → FAISS → FastAPI → UI.**
+**Animated arrows showing the progression from raw data → preprocessing → FAISS → backend → UI.**
 
+> ✔ Works on GitHub (inline SVG with CSS animation)
+> ✔ Safe — no JS, no SMIL
 
 ```html
 <p align="center">
 <svg width="600" height="140" xmlns="http://www.w3.org/2000/svg">
   <style>
     .pulse {
-      stroke-dasharray: 6;
+      stroke-dasharray: 5;
       animation: dash 1.2s linear infinite;
     }
     @keyframes dash {
-      to { stroke-dashoffset: -20; }
+      to { stroke-dashoffset: -25; }
     }
     .box {
-      fill: #e0f2fe;
-      stroke: #0284c7;
-      stroke-width: 1.6;
+      fill: #e9ecef;
+      stroke: #6c757d;
+      stroke-width: 1.4;
       rx: 6;
       ry: 6;
     }
@@ -183,25 +155,21 @@ sequenceDiagram
   </style>
 
   <!-- Boxes -->
-  <rect class="box" x="10" y="50" width="110" height="40"/>
-  <rect class="box" x="150" y="50" width="110" height="40"/>
-  <rect class="box" x="290" y="50" width="110" height="40"/>
-  <rect class="box" x="430" y="50" width="110" height="40"/>
+  <rect class="box" x="20" y="50" width="120" height="40"/>
+  <rect class="box" x="170" y="50" width="120" height="40"/>
+  <rect class="box" x="320" y="50" width="120" height="40"/>
+  <rect class="box" x="470" y="50" width="120" height="40"/>
 
-  <!-- Box Labels -->
-  <text x="25" y="75">Raw JSON</text>
-  <text x="165" y="75">Cleaned FAQs</text>
-  <text x="312" y="75">FAISS Index</text>
-  <text x="458" y="75">FastAPI → UI</text>
+  <!-- Labels -->
+  <text x="45" y="75">Raw JSON</text>
+  <text x="185" y="75">Cleaned FAQs</text>
+  <text x="342" y="75">FAISS Index</text>
+  <text x="495" y="75">API → UI</text>
 
-  <!-- Connecting Arrows -->
-  <line x1="120" y1="70" x2="150" y2="70" 
-        stroke="#0284c7" stroke-width="3" class="pulse"/>
-  <line x1="260" y1="70" x2="290" y2="70" 
-        stroke="#0284c7" stroke-width="3" class="pulse"/>
-  <line x1="400" y1="70" x2="430" y2="70" 
-        stroke="#0284c7" stroke-width="3" class="pulse"/>
-
+  <!-- Animated Arrows -->
+  <line x1="140" y1="70" x2="170" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
+  <line x1="290" y1="70" x2="320" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
+  <line x1="440" y1="70" x2="470" y2="70" class="pulse" stroke="#6c757d" stroke-width="3"/>
 </svg>
 </p>
 ```
