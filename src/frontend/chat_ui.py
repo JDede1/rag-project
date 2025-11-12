@@ -1,67 +1,67 @@
 """
 chat_ui.py
---------------------
-Simple web interface for interacting with the RAG API backend.
-Serves an HTML chat form connected to FastAPI endpoints.
+-------------------------------------
+Streamlit Chat UI for RAG system with evidence viewer.
 """
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-import httpx
+import streamlit as st
+import requests
+import os
+import pandas as pd
 
-app = FastAPI(title="RBC RAG Chat UI")
+# ✅ Backend URL (set automatically from file or env)
+URL_FILE = "/content/rag-project/rag_llm_url.txt"
+if os.path.exists(URL_FILE):
+    BACKEND_URL = open(URL_FILE).read().strip()
+else:
+    BACKEND_URL = st.secrets.get("RAG_BACKEND_URL", "http://localhost:8000")
 
-# ---------------------------------------------------------
-# Static & Templates
-# ---------------------------------------------------------
-app.mount("/static", StaticFiles(directory="src/frontend/static"), name="static")
-templates = Jinja2Templates(directory="src/frontend/templates")
+st.set_page_config(page_title="💬 RBC RAG Assistant", layout="wide")
 
-# ---------------------------------------------------------
-# Backend API Endpoint
-# ---------------------------------------------------------
-RAG_API_URL = "http://127.0.0.1:8000"
+st.title("💬 RBC AI Assistant")
+st.caption("Ask questions about RBC banking FAQs")
 
-# ---------------------------------------------------------
-# Routes
-# ---------------------------------------------------------
-@app.get("/", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    """Serve the chat interface."""
-    return templates.TemplateResponse(
-        "index.html", {"request": request, "answer": None, "query": None, "loading": False}
-    )
+# Sidebar info
+st.sidebar.header("📚 Retrieved FAQ Evidence")
+st.sidebar.info("Relevant FAQs will appear here after you ask a question.")
 
+# Session state
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+if "context_docs" not in st.session_state:
+    st.session_state["context_docs"] = []
 
-@app.post("/ask", response_class=HTMLResponse)
-async def ask_rag(request: Request):
-    """Send user query to the RAG backend and display answer."""
-    form = await request.form()
-    query = form.get("query")
+# Display chat history
+for role, text in st.session_state["messages"]:
+    with st.chat_message(role):
+        st.markdown(text)
 
-    # Immediately show a loading message (re-render with spinner)
-    loading_context = {"request": request, "query": query, "answer": None, "loading": True}
-    loading_html = templates.get_template("index.html").render(loading_context)
+# Input box
+if prompt := st.chat_input("Type your question here..."):
+    st.session_state["messages"].append(("user", prompt))
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    # ⚡ Start fetching the answer from the backend
+    # --- Call backend ---
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{RAG_API_URL}/ask",
-                params={"query": query, "top_k": 3},
-                timeout=120.0  # wait up to 2 minutes
-            )
-            result = resp.json()
-            answer = result if isinstance(result, str) else result[0].get("answer", str(result))
-    except httpx.ReadTimeout:
-        answer = "⏱️ The model took too long to respond. Try simplifying your question."
+        resp = requests.get(f"{BACKEND_URL}/ask", params={"query": prompt, "top_k": 3})
+        data = resp.json()
+        answer = data.get("answer", "⚠️ No answer received.")
+        context = data.get("context", [])
     except Exception as e:
-        answer = f"❌ Error: {e}"
+        answer = f"⚠️ Connection error: {e}"
+        context = []
 
-    # Render final answer
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "query": query, "answer": answer, "loading": False},
-    )
+    # Display assistant response
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+
+    st.session_state["messages"].append(("assistant", answer))
+    st.session_state["context_docs"] = context
+
+# Sidebar evidence panel
+if st.session_state["context_docs"]:
+    for i, doc in enumerate(st.session_state["context_docs"], start=1):
+        st.sidebar.markdown(f"**{i}. {doc['question']}**")
+        st.sidebar.write(doc["answer"][:400] + ("..." if len(doc["answer"]) > 400 else ""))
+        st.sidebar.divider()
