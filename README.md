@@ -104,40 +104,24 @@ sequenceDiagram
 
 ### Caption
 
-**Animated arrows showing the progression from raw data → preprocessing → FAISS → backend → UI.**
+**Data flow showing the progression from raw data → preprocessing → embeddings → FAISS → backend → UI.**
 
-<p align="center">
-<svg width="600" height="140" xmlns="http://www.w3.org/2000/svg">
+```mermaid
+flowchart LR
+    %% Styles
+    classDef box fill:#e9ecef,stroke:#6c757d,stroke-width:1px,color:#000,rx:6,ry:6;
 
-  <!-- Boxes -->
-  <rect x="20" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
-  <rect x="170" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
-  <rect x="320" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
-  <rect x="470" y="50" width="120" height="40" fill="#e9ecef" stroke="#6c757d" rx="6" ry="6" stroke-width="1.4"/>
+    %% Nodes
+    A[Raw JSON<br/>Scraped RBC Data]:::box
+    B[Preprocessing<br/>Cleaning • Normalization • Splitting]:::box
+    C[Embeddings<br/>SentenceTransformers]:::box
+    D[FAISS Index<br/>Vector Store]:::box
+    E[FastAPI Backend<br/>RAG Pipeline]:::box
+    F[Streamlit UI<br/>Chat Interface]:::box
 
-  <!-- Labels -->
-  <text x="45" y="75" font-size="13" font-family="sans-serif">Raw JSON</text>
-  <text x="185" y="75" font-size="13" font-family="sans-serif">Cleaned FAQs</text>
-  <text x="342" y="75" font-size="13" font-family="sans-serif">FAISS Index</text>
-  <text x="495" y="75" font-size="13" font-family="sans-serif">API → UI</text>
-
-  <!-- Animated Arrow 1 -->
-  <line x1="140" y1="70" x2="170" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
-  </line>
-
-  <!-- Animated Arrow 2 -->
-  <line x1="290" y1="70" x2="320" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
-  </line>
-
-  <!-- Animated Arrow 3 -->
-  <line x1="440" y1="70" x2="470" y2="70" stroke="#6c757d" stroke-width="3" stroke-dasharray="4,4">
-    <animate attributeName="stroke-dashoffset" values="0;-20" dur="0.9s" repeatCount="indefinite"/>
-  </line>
-
-</svg>
-</p>
+    %% Flow
+    A --> B --> C --> D --> E --> F
+```
 
 ---
 
