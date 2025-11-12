@@ -52,57 +52,19 @@ If an answer is not found in the retrieved FAQs, the model responds exactly:
 
 ### System Overview
 
-Shows the full request flow: user → UI → backend → retriever → generator → UI.
+**Shows the full request flow: user → UI → backend → retriever → generator → UI**.
 
 ```mermaid
 flowchart TB
     U["User<br>Browser"] --> S["Streamlit UI"]
     S -->|HTTP /ask| A["FastAPI Backend"]
     A -->|Vector Search| R["Retriever<br>FAISS"]
-    R -->|Context| G["Generator<br>Phi-3 Mini"]
+    R -->|Model Context| G["Generator<br>Phi-3 Mini"]
     G --> A --> S
     S -->|Evidence| SB["FAQ Sidebar"]
 ```
 
 ### Data Flow
-
-End-to-end movement from raw JSON → embeddings → FAISS index → API → UI.
-
-```mermaid
-flowchart LR
-    RAW["Raw JSON"] --> CLEAN["Cleaned FAQs"]
-    CLEAN --> EMBED["Embeddings"]
-    EMBED --> INDEX["FAISS Index"]
-    INDEX --> API["FastAPI Backend"]
-    API --> UI["Streamlit UI"]
-```
-
-### Sequence Diagram
-
-Full query lifecycle from user → retrieval → answer.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User
-    participant UI as Streamlit UI
-    participant API as FastAPI Backend
-    participant RET as Retriever (FAISS)
-    participant GEN as Phi-3 Mini
-
-    U->>UI: Ask question
-    UI->>API: POST /ask
-    API->>RET: Search embeddings
-    RET-->>API: Top-k results
-    API->>GEN: Context + prompt
-    GEN-->>API: Answer
-    API-->>UI: Response + evidence
-    UI-->>U: Display result
-```
-
----
-
-### Caption
 
 **Data flow showing the progression from raw data → preprocessing → embeddings → FAISS → backend → UI.**
 
@@ -121,6 +83,29 @@ flowchart LR
 
     %% Flow
     A --> B --> C --> D --> E --> F
+```
+
+### Sequence Diagram
+
+**Full query lifecycle from user → retrieval → answer**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant UI as Streamlit<br/>UI
+    participant API as FastAPI<br/>Backend
+    participant RET as Retriever<br/>(FAISS)
+    participant GEN as Phi-3<br/>Mini
+
+    U->>UI: Ask question
+    UI->>API: POST /ask
+    API->>RET: Search embeddings
+    RET-->>API: Return top-k results
+    API->>GEN: Provide context + prompt
+    GEN-->>API: Generate grounded answer
+    API-->>UI: Send response + evidence
+    UI-->>U: Display final answer
 ```
 
 ---
