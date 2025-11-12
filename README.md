@@ -1,9 +1,7 @@
----
-
-````markdown
 # 🧠 RAG Project  
 *A Retrieval-Augmented Generation (RAG) System for Canadian Banking FAQs — starting with RBC*  
 
+````markdown
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-ff4b4b?logo=streamlit)
@@ -64,7 +62,7 @@ flowchart TB
     R -->|Top-k Context| G[Phi-3 Mini Generator<br/>(src/generation/generator.py)]
     G --> A --> S
     S -->|Display Evidence| SB[Sidebar FAQ Viewer]
-````
+```
 
 ### 🔹 Data Flow
 
@@ -153,14 +151,14 @@ ngrok.set_auth_token(token)
 ngrok.kill()
 
 backend_url = ngrok.connect(8000)
-print("🔗 Backend API URL:", backend_url.public_url)
+print("Backend API URL:", backend_url.public_url)
 
 # Save for frontend
 with open("/content/rag-project/rag_llm_url.txt", "w") as f:
     f.write(backend_url.public_url)
 
 time.sleep(3)
-print("✅ Health:", requests.get(f"{backend_url.public_url}/health").json())
+print("Health:", requests.get(f"{backend_url.public_url}/health").json())
 ```
 
 ### 3️⃣ Start Streamlit Frontend
@@ -208,7 +206,7 @@ token = userdata.get("PAT_TOKEN")
 !git config --global user.email "dedenuolajibola@yahoo.com"
 %cd /content/rag-project
 !git add .
-!git commit -m "🔄 Update project"
+!git commit -m "Update project"
 !git push https://{token}@github.com/JDede1/rag-project.git main
 ```
 
@@ -257,3 +255,4 @@ You can instantly try the full RAG system (backend + frontend + ngrok tunnels) d
 > 💡 *Tip:* The demo notebook automatically installs dependencies, launches both backend and frontend, and provides you with a live public Streamlit chat URL.
 
 ---
+
