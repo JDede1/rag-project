@@ -4,306 +4,230 @@
 # 🧠 RAG Project  
 *A Retrieval-Augmented Generation (RAG) System for Canadian Banking FAQs — starting with RBC*  
 
-![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)
+![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-ff4b4b?logo=streamlit)
 ![SentenceTransformers](https://img.shields.io/badge/SentenceTransformers-Embeddings-orange)
 ![FAISS](https://img.shields.io/badge/FAISS-VectorStore-brightgreen)
-![Phi3](https://img.shields.io/badge/Phi--3-InstructModel-blueviolet)
-![LLaMA](https://img.shields.io/badge/LLaMA-InstructModel-purple)
-![Docker](https://img.shields.io/badge/Docker-Containerization-2496ed?logo=docker)
-![Terraform](https://img.shields.io/badge/Terraform-IaC-844fba?logo=terraform)
-![Evidently](https://img.shields.io/badge/Evidently-Monitoring-008080)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-black?logo=githubactions)
-![GCP Cloud Run](https://img.shields.io/badge/GCP-Cloud%20Run-4285F4?logo=googlecloud)
+![Phi3](https://img.shields.io/badge/Phi--3--Mini-4k--Instruct-blueviolet)
+![Ngrok](https://img.shields.io/badge/Ngrok-Tunneling-black)
+![GitHub](https://img.shields.io/badge/GitHub-VersionControl-black?logo=github)
+````
 
 ---
 
 ## 📘 Project Overview
 
-This project implements an **end-to-end Retrieval-Augmented Generation (RAG)** pipeline for **Canadian banking FAQs**, beginning with Royal Bank of Canada (RBC).  
-It integrates a **FastAPI backend**, **semantic retrieval (FAISS)**, and **instruction-tuned LLMs (Phi-3 Mini or LLaMA 3.1)** to deliver grounded, explainable answers.
+This project builds an **end-to-end Retrieval-Augmented Generation (RAG)** pipeline for **Canadian banking FAQs**, beginning with **Royal Bank of Canada (RBC)**.
 
-The system prevents **hallucinations** by grounding responses strictly in retrieved FAQ context — replying *“I don’t know.”* when an answer is unavailable.  
+The system combines:
+- **Semantic retrieval** using **FAISS + Sentence-Transformers**
+- **Grounded text generation** with **Phi-3 Mini 4k Instruct**
+- A **FastAPI backend** for retrieval + generation
+- A **Streamlit chat interface** for interactive Q&A  
+- All running securely inside **Google Colab** using **ngrok** tunnels.
+
+If an answer is not found in the retrieved FAQs, the model responds exactly:  
+> “I don’t know.”
 
 ---
 
 ## 🎯 Project Goals
-- Build a modular, scalable RAG system that can extend to other Canadian banks.  
-- Guarantee accuracy and factual grounding.  
-- Demonstrate real-world MLOps: monitoring, CI/CD, and cloud deployment.  
-- Support GPU-based (LLaMA) and CPU-based (Phi-3 Mini) inference options.  
+
+- Develop a modular, explainable RAG system that can expand to other banks.  
+- Ensure accuracy and prevent hallucinations via contextual grounding.  
+- Demonstrate practical MLOps: experiment tracking, CI/CD, monitoring, and cloud readiness.  
+- Support both **GPU** (T4) and **CPU** inference modes in Colab.
 
 ---
 
-## 🧠 Model Selection
+## 🧠 Model
 
-By default, the system runs **Phi-3 Mini (fast for CPU)**.  
-To use **LLaMA 3.1 (8B, high quality, GPU recommended)**:
-
-```bash
-make run-api MODEL=llama
-````
-
-To switch back:
-
-```bash
-make run-api MODEL=phi3
-```
+- **Default:** `microsoft/Phi-3-mini-4k-instruct` (8-bit quantized)  
+- **Why:** Lightweight, instruction-tuned, and efficient for Colab GPU (≈ 6 GB VRAM).  
+- **Pipeline:**  
+  - Tokenizer & model loaded via `transformers`  
+  - Prompt template enforces factual, context-bound answers  
+  - Returns concise responses (< 800 chars)
 
 ---
 
-## 🧭 Architecture Diagram
----
+## 🧭 Architecture
 
-### 1) System Architecture (RAG + Infra)
-
-```mermaid
-flowchart LR
-  %% STYLE
-  classDef svc fill:#e7f0ff,stroke:#3b82f6,stroke-width:1px,color:#111,rx:8,ry:8;
-  classDef comp fill:#f1f5f9,stroke:#64748b,stroke-width:1px,color:#111,rx:8,ry:8;
-  classDef data fill:#ecfeff,stroke:#06b6d4,stroke-width:1px,color:#111,rx:8,ry:8;
-  classDef cloud fill:#eefce8,stroke:#16a34a,stroke-width:1px,color:#111,rx:8,ry:8;
-  classDef monitor fill:#fff7ed,stroke:#f97316,stroke-width:1px,color:#111,rx:8,ry:8;
-
-  %% CLIENT
-  U[User<br/>Browser]:::comp --> UI[Streamlit UI<br/>(src/frontend/app.py)]:::svc
-
-  %% BACKEND
-  UI -->|HTTP /ask| API[FastAPI Backend<br/>(src/api/main.py)]:::svc
-
-  subgraph RETRIEVAL["RAG Retrieval Layer"]
-    Q[Query Embedder<br/>Sentence-Transformers<br/>(MiniLM-L6-v2)]:::comp
-    VS[(FAISS Index<br/>/index/rbc)]:::data
-    DS[(Processed Docs<br/>/data/processed/*.parquet)]:::data
-    API --> Q
-    Q --> VS
-    VS -->|Top-k chunks + scores| PB[Prompt Builder<br/>(src/generation/prompts.py)]:::comp
-    DS -. load/refresh .-> VS
-  end
-
-  %% GENERATION
-  PB -->|JSON prompt| COLAB[LLM Inference (LLaMA Instruct)<br/>Google Colab GPU + Tunnel]:::svc
-  COLAB -->|Answer JSON| API
-
-  %% OUTPUT
-  API --> UI
-  UI -->|HTTP /feedback| FB[Feedback Logger<br/>(JSONL/GCS)]:::data
-
-  %% MONITORING
-  subgraph MON["Monitoring & Analytics"]
-    EV[Evidently Reports<br/>(drift/quality)<br/>src/monitoring/evidently_report.py]:::monitor
-    DASH[Feedback Dashboard<br/>Streamlit<br/>src/dashboard/feedback_dashboard.py]:::monitor
-  end
-  FB --> DASH
-  VS --> EV
-  EV --> GCS[(GCS Bucket<br/>gs://rag-banking.../reports)]:::cloud
-
-  %% DEPLOYMENT
-  subgraph CLOUD["Deployment (GCP)"]
-    CR[Cloud Run<br/>FastAPI container]:::cloud
-    AR[(Artifact Registry)]:::cloud
-    SE[Secret Manager<br/>(COLAB URL/TOKEN)]:::cloud
-    BKT[(GCS Bucket<br/>indexes, docs)]:::cloud
-  end
-
-  API -. docker image .-> AR
-  AR --> CR
-  SE --> CR
-  BKT --> CR
-  CR -->|Public HTTPS| UI
-
-  %% AUTOMATION
-  subgraph CI["Automation"]
-    GH[GitHub Actions<br/>CI/CD]:::comp
-    TF[Terraform IaC<br/>infra/terraform]:::comp
-  end
-  GH -->|build/test/push| AR
-  GH -->|terraform apply| TF
-  TF --> CLOUD
-```
-
----
-
-### 2) Request Sequence (Ask → Retrieve → Generate → Respond)
-
-```mermaid
-sequenceDiagram
-  autonumber
-  participant User
-  participant UI as Streamlit UI
-  participant API as FastAPI /ask
-  participant EMB as Embedder (MiniLM)
-  participant IDX as FAISS Index
-  participant PB as Prompt Builder
-  participant LLM as LLaMA (Colab GPU)
-
-  User->>UI: Enter question
-  UI->>API: POST /ask {question, bank, top_k}
-  API->>EMB: Embed(question)
-  EMB-->>API: query_vector
-  API->>IDX: top_k(query_vector)
-  IDX-->>API: {chunks, scores, sources}
-  API->>PB: build_prompt(chunks, rules)
-  PB-->>API: prompt (JSON-instruct)
-  API->>LLM: POST /generate {prompt}
-  LLM-->>API: {answer, cited_sources}
-  API-->>UI: {answer, sources, confidence}
-  UI->>API: (optional) POST /feedback {👍/👎, comment}
-```
-
----
-
-### 3) Data & Artifact Flow
+### 🔹 System Overview
 
 ```mermaid
 flowchart TB
-  classDef box fill:#f8fafc,stroke:#334155,rx:8,ry:8;
-  Raw[data/raw/rbc/*.md]:::box --> Clean[data/processed/rbc_faqs.parquet]:::box
-  Clean --> Emb[Embeddings<br/>.npy/.pt]:::box
-  Emb --> Index[index/rbc/index.faiss]:::box
-  Index --> Run[FastAPI Runtime<br/>loads FAISS]:::box
-  Clean --> Run
-  Run --> Reports[Evidently HTML Reports]:::box
-  Reports --> GCS[(GCS /reports)]:::box
+    U[User<br/>Browser/Colab] --> S[Streamlit Chat UI<br/>(src/frontend/chat_ui.py)]
+    S -->|HTTP /ask| A[FastAPI Backend<br/>(src/api/main.py)]
+    A -->|Vector Search| R[RbcRetriever<br/>FAISS Index]
+    R -->|Top-k Context| G[Phi-3 Mini Generator<br/>(src/generation/generator.py)]
+    G --> A --> S
+    S -->|Display Evidence| SB[Sidebar FAQ Viewer]
+````
+
+### 🔹 Data Flow
+
+```mermaid
+flowchart LR
+    S1[data/raw/rbc/*.json] --> S2[data/processed/rbc_faqs.parquet]
+    S2 --> S3[Sentence-Transformer Embeddings]
+    S3 --> S4[FAISS Index (index.faiss)]
+    S4 --> B[FastAPI Backend]
+    B --> F[Streamlit UI]
 ```
 
 ---
 
 ## ⚙️ Tech Stack
 
-| Category            | Tools                                      |
+| Layer               | Tools                                      |
 | ------------------- | ------------------------------------------ |
-| **Language**        | Python 3.11                                |
-| **Frameworks**      | FastAPI · Streamlit                        |
-| **Vector Store**    | FAISS                                      |
+| **Language**        | Python 3.12                                |
+| **Backend**         | FastAPI + Uvicorn                          |
+| **Frontend**        | Streamlit                                  |
 | **Embeddings**      | Sentence-Transformers (`all-MiniLM-L6-v2`) |
-| **LLM**             | LLaMA Instruct (served via Colab GPU)      |
-| **Infrastructure**  | Docker · Terraform · GCP Cloud Run         |
-| **Monitoring**      | Evidently AI                               |
-| **Testing**         | Pytest                                     |
-| **CI/CD**           | GitHub Actions                             |
-| **Version Control** | Git + VS Code                              |
+| **Vector DB**       | FAISS-GPU                                  |
+| **LLM**             | Microsoft Phi-3 Mini 4k Instruct           |
+| **Infra / Tunnel**  | Ngrok (Colab Secrets)                      |
+| **Version Control** | Git + GitHub (PAT Token auth)              |
 
 ---
 
 ## 🗂️ Project Structure
 
 ```bash
+rag-project/
 ├─ src/
-│  ├─ api/          # FastAPI backend endpoints
-│  ├─ frontend/     # Web Chat UI (HTML + Jinja2 Templates)
-│  ├─ ingestion/    # RBC FAQ scraping scripts
-│  ├─ preprocess/   # Cleaning and text chunking
-│  ├─ embeddings/   # Embedding generation and FAISS index
-│  ├─ generation/   # Prompt and LLM inference (Phi-3 / LLaMA)
-│  ├─ retrieval/    # Search and ranking
-│  ├─ monitoring/   # Drift and feedback monitoring
-│  └─ tests/        # Unit and integration tests
+│  ├─ api/          # FastAPI backend (main.py)
+│  ├─ frontend/     # Streamlit Chat UI (chat_ui.py)
+│  ├─ ingestion/    # RBC FAQ scraping
+│  ├─ preprocess/   # Cleaning and text splitting
+│  ├─ embeddings/   # Embedding generation + FAISS index
+│  ├─ retrieval/    # RbcRetriever (FAISS search)
+│  ├─ generation/   # Phi-3 text generation
+│  └─ utils/        # Helper scripts (e.g., sync_colab_url.py)
 │
 ├─ data/
-│  ├─ raw/          # Scraped RBC pages
-│  ├─ processed/    # Cleaned FAQ dataset
-│  ├─ index/        # FAISS index and metadata
-│  └─ reports/      # Data inspection reports
+│  ├─ raw/          # Scraped RBC content
+│  ├─ processed/    # Cleaned dataset
+│  ├─ index/        # FAISS index + metadata
+│  └─ reports/      # Data inspection / monitoring
 │
-├─ logs/            # System and scraping logs
-├─ infra/terraform/ # Infrastructure-as-Code
-├─ Makefile         # Developer commands
-├─ requirements.txt # Dependencies
+├─ logs/            # Runtime and scraping logs
+├─ requirements.txt
 └─ README.md
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Sprint Progress
 
-### 1️⃣ Clone and set up environment
-
-```bash
-git clone git@github.com:JDede1/rag-project.git
-cd rag-project
-python3 -m venv venv
-source venv/bin/activate
-make install
-```
-
-### 2️⃣ Run the backend
-
-```bash
-make run-api
-```
-
-Access docs → [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
-### 3️⃣ Run the web chat UI
-
-```bash
-make run-ui
-```
-
-Access the UI → [http://127.0.0.1:8500](http://127.0.0.1:8500)
+| Sprint | Focus                     | Key Deliverables                                     |
+| ------ | ------------------------- | ---------------------------------------------------- |
+| **1**  | Environment Setup         | Installed dependencies, GPU config, folder structure |
+| **2**  | Data Ingestion            | RBC FAQ scraper (`scrape_rbc_faqs.py`)               |
+| **3**  | Preprocessing + Retrieval | Clean data, generate embeddings, build FAISS index   |
+| **4**  | Backend API               | FastAPI / ask endpoint + Phi-3 generator             |
+| **5**  | Frontend UI               | Streamlit chat interface + ngrok integration         |
 
 ---
 
-## 🧪 Testing
+## ⚡ Running the Project (Colab)
 
-Run all unit tests:
+### 1️⃣ Start Backend Server
 
-```bash
-pytest -v
+```python
+!nohup uvicorn src.api.main:app --host 0.0.0.0 --port 8000 > /content/rag-project/backend.log 2>&1 &
 ```
 
-Includes:
+### 2️⃣ Expose Backend via ngrok
 
-* Embedding vector generation
-* FAISS retrieval
-* “I don’t know” fallback
-* `/ask` & `/feedback` endpoint validation
+```python
+from pyngrok import ngrok
+from google.colab import userdata
+import os, requests, time
+
+token = userdata.get("NGROK_TOKEN")
+ngrok.set_auth_token(token)
+ngrok.kill()
+
+backend_url = ngrok.connect(8000)
+print("🔗 Backend API URL:", backend_url.public_url)
+
+# Save for frontend
+with open("/content/rag-project/rag_llm_url.txt", "w") as f:
+    f.write(backend_url.public_url)
+
+time.sleep(3)
+print("✅ Health:", requests.get(f"{backend_url.public_url}/health").json())
+```
+
+### 3️⃣ Start Streamlit Frontend
+
+```python
+!streamlit run /content/rag-project/src/frontend/chat_ui.py --server.port 8501 --server.address 0.0.0.0 > /content/rag-project/frontend.log 2>&1 &
+```
+
+### 4️⃣ Expose Frontend via ngrok
+
+```python
+frontend_url = ngrok.connect(8501)
+print("💬 Streamlit Chat UI:", frontend_url.public_url)
+```
 
 ---
 
-## ☁️ Deployment
+## 🧪 Example Query
 
-### Docker
+**User:**
 
-```bash
-docker build -t rag-banking .
-docker run -p 8000:8000 rag-banking
-```
+> How do I report a lost credit card?
 
-### Terraform (IaC)
+**Model Output:**
 
-```bash
-cd infra/terraform
-terraform init
-terraform apply -auto-approve
-```
+> If your RBC credit card is lost or stolen, call 1-800-769-2512 immediately.
+> You can also lock or unlock your card using RBC Online Banking or the Mobile App.
 
-### GitHub Actions (CI/CD)
-
-* Runs on every push:
-
-  * ✅ Lint & test
-  * 🐳 Build & push Docker image
-  * ☁️ Deploy to Cloud Run
+**Context:**
+Displayed in Streamlit sidebar (top-3 retrieved FAQs).
 
 ---
 
-## 📊 Monitoring & Feedback
+## ☁️ Deployment & Version Control
 
-* **Evidently AI** for drift and response quality monitoring
-* **User feedback logs** integrated for continuous improvement
-* Reports saved under `/data/reports/`
+* Git configured with PAT token via Colab Secrets
+* Repo: [https://github.com/JDede1/rag-project](https://github.com/JDede1/rag-project)
+* Push workflow:
+
+```python
+from google.colab import userdata
+token = userdata.get("PAT_TOKEN")
+
+!git config --global user.name "JDede1"
+!git config --global user.email "dedenuolajibola@yahoo.com"
+%cd /content/rag-project
+!git add .
+!git commit -m "🔄 Update project"
+!git push https://{token}@github.com/JDede1/rag-project.git main
+```
+
+---
+
+## 📊 Monitoring (Coming Soon – Sprint 6)
+
+* Evidently AI for drift and quality monitoring
+* Query + latency logging
+* Lightweight Streamlit dashboard for feedback visualization
 
 ---
 
 ## 💡 Future Enhancements
 
-* Add LangChain or LlamaIndex orchestration
-* Replace Colab inference with Vertex AI Endpoint
-* Integrate WhyLabs for observability
-* Extend RAG coverage to TD, CIBC, BMO, and Scotiabank
+* Replace Colab runtime with GCP Cloud Run deployment
+* Integrate WhyLogs for data drift monitoring
+* Add LangChain/LlamaIndex retrieval chains
+* Expand FAQ coverage to TD, CIBC, BMO, Scotiabank
 
 ---
 
@@ -312,12 +236,24 @@ terraform apply -auto-approve
 **Ajibola Dedenuola**
 *Data Scientist · Machine Learning Engineer · MLOps Specialist*
 
-🎓 M.Sc. Information Science & Machine Learning — *University of Arizona*
-🔗 [GitHub](https://github.com/JDede1) · [LinkedIn](#)
+🎓 M.Sc. Information Science & Machine Learning — University of Arizona
+🔗 [GitHub](https://github.com/JDede1)
 
 ---
 
 ## 🪪 License
 
-This project uses only publicly available RBC FAQ data for **educational and research purposes**.
-All trademarks and content belong to **RBC Royal Bank**.
+This project uses publicly available RBC FAQ content for **educational and research purposes**.
+All trademarks and materials belong to **RBC Royal Bank**.
+
+---
+
+## 🚀 Quick Demo — Launch in Google Colab
+
+You can instantly try the full RAG system (backend + frontend + ngrok tunnels) directly in Google Colab by clicking below:
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/JDede1/rag-project/blob/main/notebooks/rag_colab_demo.ipynb)
+
+> 💡 *Tip:* The demo notebook automatically installs dependencies, launches both backend and frontend, and provides you with a live public Streamlit chat URL.
+
+---
