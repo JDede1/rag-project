@@ -24,7 +24,10 @@ from pathlib import Path
 # PATH CONFIGURATION
 # -------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[2]
-INPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_clean.parquet"
+
+# Updated to use normalized data (correct sequence: clean → normalize → split)
+INPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_normalized.parquet"
+
 OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_refined.parquet"
 
 
@@ -32,7 +35,7 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_refined.parquet"
 # HELPER FUNCTIONS
 # -------------------------------------------------------
 QUESTION_START_PATTERNS = [
-    r"^[A-Z].*\?$",                    # Full-question line: "How do I reset my PIN?"
+    r"^[A-Z].*\?$",                    # Full standalone question
     r"^-?\s*[A-Z].*?\?$",              # Bullet question: "- How do I apply?"
     r"^\d+\.\s*[A-Z].*?\?$",           # Numbered question: "1. What is my limit?"
 ]
@@ -73,29 +76,26 @@ def extract_atomic_faqs(question: str, answer: str):
     if len(question_indices) <= 1:
         return [{"question": question.strip(), "answer": answer.strip()}]
 
-    # Build atomic units
     atomic_pairs = []
 
     for idx, q_index in enumerate(question_indices):
         sub_q = lines[q_index]
 
-        # Determine answer block boundaries
+        # Determine answer boundaries
         start = q_index + 1
         end = question_indices[idx + 1] if idx + 1 < len(question_indices) else len(lines)
 
         sub_a_lines = lines[start:end]
         sub_a = " ".join(sub_a_lines).strip()
 
-        # Validate minimum answer length
         if len(sub_a) < 10:
             continue
 
-        # Normalize question (strip bullets like "- " or "1. ")
+        # Normalize question text
         sub_q = re.sub(r"^[-\d\.\s]+", "", sub_q).strip()
 
         atomic_pairs.append({"question": sub_q, "answer": sub_a})
 
-    # Fallback: if splitting produced nothing valid, keep original
     if not atomic_pairs:
         return [{"question": question.strip(), "answer": answer.strip()}]
 
@@ -119,7 +119,6 @@ def refine_faqs():
 
     refined_df = pd.DataFrame(refined_rows).drop_duplicates(subset=["question", "answer"])
 
-    # Clean whitespace again after reconstructing blocks
     refined_df["question"] = refined_df["question"].str.strip()
     refined_df["answer"] = refined_df["answer"].str.strip()
 
