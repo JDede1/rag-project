@@ -1,20 +1,20 @@
 """
 search_engine.py
--------------------------------------
-Reusable FAISS-based semantic retriever for RBC FAQs.
+-------------------------------------------------------
+FAISS-based semantic retriever for chunked RBC FAQ data.
 
-Purpose:
-    • Load FAISS index, metadata, and model
-    • Embed user queries
-    • Retrieve top-k semantically similar FAQs
-    • Return structured results (question, answer, score, url)
+Phase 4 Requirements:
+    • Use upgraded all-mpnet-base-v2 embeddings
+    • Retrieve chunk-level results (not whole answers)
+    • Return structured, JSON-friendly dictionaries
+    • Include provenance metadata (url, source, retrieved_at)
+    • Normalize query embeddings for cosine similarity
+    • Serve as backend utility for FastAPI
 
-Usage Example:
+Usage:
     from retrieval.search_engine import RbcRetriever
-
     retriever = RbcRetriever()
-    results = retriever.search("How do I report a lost credit card?", top_k=3)
-    print(results)
+    results = retriever.search("How do I report a lost credit card?", top_k=5)
 """
 
 import faiss
@@ -26,51 +26,79 @@ from sentence_transformers import SentenceTransformer
 
 class RbcRetriever:
     def __init__(self):
-        """Initialize retriever — load FAISS index, metadata, and model."""
+        """Load FAISS index, metadata, and embedding model once on startup."""
         base_dir = Path(__file__).resolve().parents[2]
-        self.data_dir = base_dir / "data" / "index"
+        index_dir = base_dir / "data" / "index"
 
-        self.index_path = self.data_dir / "rbc_faiss.index"
-        self.meta_path = self.data_dir / "rbc_metadata.parquet"
-        self.model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        self.index_path = index_dir / "rbc_faiss.index"
+        self.meta_path = index_dir / "rbc_metadata.parquet"
+        self.model_name = "sentence-transformers/all-mpnet-base-v2"
 
-        print("🔹 Loading FAISS index and metadata...")
+        # Load index + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
+
+        # Load transformer model
         self.model = SentenceTransformer(self.model_name)
 
-        print(f"✅ Loaded index with {self.index.ntotal} vectors.")
-        print(f"✅ Loaded metadata with {len(self.metadata)} records.\n")
+        print(f"Loaded FAISS index with {self.index.ntotal} vectors")
+        print(f"Loaded metadata rows: {len(self.metadata)}")
 
-    def search(self, query: str, top_k: int = 3) -> pd.DataFrame:
-        """Search FAISS index for top-k semantically similar entries."""
-        if not query or not query.strip():
+    def search(self, query: str, top_k: int = 5):
+        """
+        Perform semantic retrieval.
+
+        Returns:
+            List[dict] where each element contains:
+                - question
+                - chunk
+                - score
+                - url (if present)
+                - source
+                - retrieved_at
+        """
+        if not isinstance(query, str) or not query.strip():
             raise ValueError("Query text cannot be empty.")
 
-        # Encode and normalize the query embedding
+        # Encode search query
         query_emb = self.model.encode([query], convert_to_numpy=True)
         faiss.normalize_L2(query_emb)
 
-        # Search top-k results
-        D, I = self.index.search(query_emb, top_k)
+        # Retrieve nearest neighbors
+        distances, indices = self.index.search(query_emb, top_k)
 
-        # Build results DataFrame
-        results = self.metadata.iloc[I[0]].copy()
-        results["score"] = D[0]
-        results = results[["question", "answer", "url", "score"]]
-        return results.sort_values(by="score", ascending=False).reset_index(drop=True)
+        results = []
+        for score, idx in zip(distances[0], indices[0]):
+            row = self.metadata.iloc[idx]
 
-    def pretty_print(self, query: str, top_k: int = 3):
-        """Convenience function to display top-k results nicely."""
-        print(f"\n🔍 Query: {query}\n")
+            entry = {
+                "question": row.get("question", ""),
+                "chunk": row.get("chunk", ""),
+                "score": float(score),
+                "url": row.get("url", None),
+                "source": row.get("source", None),
+                "retrieved_at": row.get("retrieved_at", None),
+                "source_faq_index": int(row.get("source_faq_index", -1))
+            }
+
+            results.append(entry)
+
+        # Sort by score descending
+        results = sorted(results, key=lambda x: x["score"], reverse=True)
+        return results
+
+    def pretty_print(self, query: str, top_k: int = 5):
+        """Developer utility for console testing."""
         results = self.search(query, top_k)
-        for i, row in results.iterrows():
-            print(f"{i+1}. ({row['score']:.3f}) {row['question']}")
-            print(f"   → {row['answer'][:200]}...")
-            print(f"   📎 {row['url']}\n")
-        print("—" * 70)
+        print(f"\nQuery: {query}\n")
+        for i, r in enumerate(results, start=1):
+            print(f"{i}. ({r['score']:.4f}) {r['question']}")
+            print(f"   Chunk: {r['chunk'][:160]}...")
+            if r["url"]:
+                print(f"   URL: {r['url']}")
+            print("")
 
 
 if __name__ == "__main__":
     retriever = RbcRetriever()
-    retriever.pretty_print("How do I report a lost credit card?", top_k=3)
+    retriever.pretty_print("How do I report a lost credit card?", top_k=5)
