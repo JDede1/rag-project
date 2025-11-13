@@ -2,11 +2,12 @@
 generate_embeddings.py
 -------------------------------------------------------
 Generate vector embeddings for RBC FAQ chunks using
-Sentence Transformers, while preserving provenance metadata.
+the high-performance 'all-mpnet-base-v2' model, while
+preserving provenance metadata.
 
-This version supports the upgraded preprocessing pipeline:
-    • clean → normalize → split → chunk
-    • final dataset: rbc_faq_chunks.parquet
+This version supports the modern preprocessing pipeline:
+    clean → normalize → split → chunk
+Final input dataset: rbc_faq_chunks.parquet
 
 Each chunk contains:
     question
@@ -24,7 +25,6 @@ Outputs:
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
 
@@ -37,7 +37,9 @@ DATA_INDEX = BASE_DIR / "data" / "index"
 
 DATA_INDEX.mkdir(parents=True, exist_ok=True)
 
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# Upgraded embedding model: high accuracy, paraphrase-strong
+MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+
 CHUNKS_PATH = DATA_PROCESSED / "rbc_faq_chunks.parquet"
 
 
@@ -50,9 +52,9 @@ def generate_embeddings():
     print(f"Loaded {len(df)} chunk entries")
 
     # ---------------------------------------------------
-    # Build embedding text
+    # Build text to embed
     # ---------------------------------------------------
-    # Format: "Question? Chunk text..."
+    # Use question + chunk (optimized for retrieval alignment)
     df["embedding_text"] = df["question"].str.strip() + " " + df["chunk"].str.strip()
 
     # ---------------------------------------------------
@@ -62,14 +64,16 @@ def generate_embeddings():
     model = SentenceTransformer(MODEL_NAME)
 
     # ---------------------------------------------------
-    # Generate embeddings
+    # Generate embeddings (GPU-optimized)
     # ---------------------------------------------------
     print("Generating embeddings...")
+
     embeddings = model.encode(
         df["embedding_text"].tolist(),
+        batch_size=32,               # L4 GPU easily handles 32
         show_progress_bar=True,
-        batch_size=16,
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        device="cuda" if model.device is not None else None
     )
 
     print(f"Embeddings shape: {embeddings.shape}")
@@ -82,7 +86,7 @@ def generate_embeddings():
     print(f"Saved embeddings → {emb_path}")
 
     # ---------------------------------------------------
-    # Save metadata (without embedding_text)
+    # Save metadata only
     # ---------------------------------------------------
     metadata_cols = [
         "question",
@@ -93,7 +97,6 @@ def generate_embeddings():
         "retrieved_at",
     ]
 
-    # Only keep columns that appear in the dataset
     metadata_cols = [c for c in metadata_cols if c in df.columns]
 
     metadata = df[metadata_cols].copy()
