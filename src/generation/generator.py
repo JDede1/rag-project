@@ -13,7 +13,7 @@ from textwrap import dedent
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # ---------------------------------------------------------
-# 1️⃣  Authentication
+# Authentication
 # ---------------------------------------------------------
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if not HF_TOKEN and os.path.exists("Keys/HF_TOKEN.txt"):
@@ -22,22 +22,22 @@ if not HF_TOKEN and os.path.exists("Keys/HF_TOKEN.txt"):
 
 if not HF_TOKEN:
     raise EnvironmentError(
-        "❌ No Hugging Face token found. "
+        "No Hugging Face token found. "
         "Set HUGGINGFACEHUB_API_TOKEN or create Keys/HF_TOKEN.txt"
     )
 
 # ---------------------------------------------------------
-# 2️⃣  Model Config (Swapped to Phi-3-mini)
+# Model Config (Swapped to Phi-3-mini)
 # ---------------------------------------------------------
 MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"🔹 Loading {MODEL_NAME} on {DEVICE} ...")
 
-# ✅ Load tokenizer
+# Load tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
 
-# ✅ Load model efficiently for CPU / small GPU
+# Load model efficiently for CPU / GPU
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     token=HF_TOKEN,
@@ -45,7 +45,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto" if torch.cuda.is_available() else None,
 )
 
-# ✅ Text-generation pipeline (Accelerate-compatible)
+# Text-generation pipeline (Accelerate-compatible)
 pipe = pipeline(
     "text-generation",
     model=model,
@@ -57,10 +57,10 @@ pipe = pipeline(
     do_sample=False,
 )
 
-print("✅ Phi-3-Mini-4k-Instruct loaded successfully.\n")
+print("Phi-3-Mini-4k-Instruct loaded successfully.\n")
 
 # ---------------------------------------------------------
-# 3️⃣  Prompt Template
+# Prompt Template
 # ---------------------------------------------------------
 def build_prompt(question: str, retrieved_docs: list[str]) -> str:
     """Compose a grounded RAG prompt for banking FAQs."""
@@ -78,7 +78,7 @@ def build_prompt(question: str, retrieved_docs: list[str]) -> str:
     """)
 
 # ---------------------------------------------------------
-# 4️⃣  Answer Generation
+# Answer Generation
 # ---------------------------------------------------------
 def generate_answer(question: str, retrieved_docs: list[str]) -> str:
     """Generate a grounded, concise answer."""
@@ -93,10 +93,10 @@ def generate_answer(question: str, retrieved_docs: list[str]) -> str:
         answer = text.split("Answer:", 1)[-1].strip() if "Answer:" in text else text.strip()
         return answer[:800].strip()
     except Exception as e:
-        return f"⚠️ Model error: {str(e)}"
+        return f"Model error: {str(e)}"
 
 # ---------------------------------------------------------
-# 5️⃣  Local Test Block
+# Local Test Block
 # ---------------------------------------------------------
 if __name__ == "__main__":
     docs = [
@@ -104,4 +104,5 @@ if __name__ == "__main__":
         "You can also lock or unlock your card in RBC Online Banking or the Mobile App."
     ]
     q = "How do I report a lost credit card?"
-    print("🧠 Generated Answer:\n", generate_answer(q, docs))
+    print("Generated Answer:\n", generate_answer(q, docs))
+
