@@ -3,12 +3,12 @@ clean_rbc_faqs.py
 -------------------------------------------------------
 Deep text cleaning for scraped RBC FAQ data.
 
-Goals:
-    • Remove boilerplate (navigation, footer, legal text)
-    • Normalize whitespace and punctuation
-    • Preserve all valid financial Q/A content
-    • Avoid over-filtering legitimate questions
-    • Output clean Q/A pairs for downstream normalization
+This version preserves provenance fields:
+    • url
+    • source
+    • retrieved_at
+
+so downstream steps (normalize → split → chunk → embed) have full metadata.
 """
 
 import re
@@ -42,9 +42,7 @@ def remove_bullet_artifacts(text: str) -> str:
 
 
 def clean_common_html_leftovers(text: str) -> str:
-    # Remove common markdown/html conversion artifacts
     patterns = [
-        r"http[s]?:\/\/\S+",      # URLs
         r"\[.*?\]\(.*?\)",        # markdown links
         r"Back to top",           # navigation fragments
         r"^\s*#\s*",              # markdown headers (#)
@@ -55,18 +53,14 @@ def clean_common_html_leftovers(text: str) -> str:
 
 
 def remove_boilerplate(text: str) -> str:
-    """
-    RBC site boilerplate patterns that frequently contaminate scraped content.
-    These were identified empirically from RBC FAQ pages.
-    """
     boilerplate_patterns = [
-        r"Royal Bank of Canada", 
-        r"©.*?RBC", 
-        r"Use our mobile app", 
+        r"Royal Bank of Canada",
+        r"©.*?RBC",
+        r"Use our mobile app",
         r"Book an appointment",
         r"Find a branch",
         r"Contact us",
-        r"You may also like", 
+        r"You may also like",
         r"Other ways to bank",
         r"Legal Disclaimer",
         r"Privacy & Security",
@@ -89,8 +83,6 @@ def deep_clean(text: str) -> str:
     text = remove_bullet_artifacts(text)
     text = clean_common_html_leftovers(text)
     text = remove_boilerplate(text)
-
-    # Final pass: collapse spacing again
     text = normalize_whitespace(text)
     return text
 
@@ -102,14 +94,12 @@ def is_valid_faq(question: str, answer: str) -> bool:
     if not question or not answer:
         return False
 
-    # Minimum lengths
     if len(question) < 8 or len(answer) < 15:
         return False
 
-    # Avoid placeholder or malformed entries
     invalid_patterns = [
-        r"^\W+$",      # punctuation-only
-        r"lorem ipsum"
+        r"^\W+$",
+        r"lorem ipsum",
     ]
 
     q = question.lower()
@@ -129,20 +119,39 @@ def clean_rbc_faqs():
     print("Loading dataset...")
     df = pd.read_parquet(INPUT_PATH)
     print(f"Loaded {len(df)} rows")
+    
+    # ---------------------------------------------------
+    # Step 1: Ensure provenance columns are preserved
+    # ---------------------------------------------------
+    preserved_cols = []
+    for col in ["url", "source", "retrieved_at"]:
+        if col in df.columns:
+            preserved_cols.append(col)
 
-    # Step 1: deep clean
+    # ---------------------------------------------------
+    # Step 2: Clean question and answer
+    # ---------------------------------------------------
     df["question"] = df["question"].apply(deep_clean)
     df["answer"] = df["answer"].apply(deep_clean)
 
-    # Step 2: remove invalid rows
+    # ---------------------------------------------------
+    # Step 3: Validation filtering
+    # ---------------------------------------------------
     df = df[df.apply(lambda x: is_valid_faq(x["question"], x["answer"]), axis=1)]
 
-    # Step 3: remove duplicates
+    # ---------------------------------------------------
+    # Step 4: Remove duplicates
+    # ---------------------------------------------------
     df.drop_duplicates(subset=["question", "answer"], inplace=True)
+
+    # ---------------------------------------------------
+    # Step 5: Keep only necessary + provenance columns
+    # ---------------------------------------------------
+    final_cols = ["question", "answer"] + preserved_cols
+    df = df[final_cols]
 
     print(f"After cleaning: {len(df)} rows remain")
 
-    # Step 4: persist
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUTPUT_PATH, index=False)
 
