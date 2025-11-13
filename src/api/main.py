@@ -1,38 +1,43 @@
 """
 main.py
--------------------------------------
-FastAPI RAG API:
-- Retrieves top-k FAQs from FAISS index
-- Generates grounded answers using Phi-3-Mini-4k-Instruct (lazy-loaded)
-- Includes strong anti-hallucination filtering
+-------------------------------------------------------
+FastAPI RAG backend for RBC banking FAQs.
+
+Phase 4 upgrades:
+    • Uses chunk-level retriever (mpnet embeddings)
+    • Uses Phi-3.5-Mini-Instruct (chat model)
+    • Strict grounding: model answers ONLY from retrieved chunks
+    • JSON-friendly output structure
+    • Cleaner, safer, predictable behavior
 """
 
-import sys, os, re
+import sys
+import os
+from pathlib import Path
 
 # ---------------------------------------------------------
-# Ensure FastAPI can import from src/ (Colab-compatible)
+# Ensure imports work in Colab / relative repo structure
 # ---------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import pandas as pd
 
-# Correct import
 from src.retrieval.search_engine import RbcRetriever
 
-# Generator is lazy-loaded
-generate_answer = None
+# Lazy-loaded generator
+_generate_answer = None
 generator_loaded = False
 
+
 # ---------------------------------------------------------
-# FastAPI App
+# FastAPI initialization
 # ---------------------------------------------------------
 app = FastAPI(
     title="RBC RAG API",
-    description="Retrieval-Augmented Generation (RAG) with FAISS + Phi-3-Mini-4k-Instruct",
-    version="1.1.0",
+    description="RBC Banking Retrieval-Augmented Generation using FAISS + Phi-3.5",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -43,72 +48,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# Load Retriever at startup
-# ---------------------------------------------------------
-print("Initializing retriever...")
-retriever = RbcRetriever()
-print("Retriever ready.\n")
 
 # ---------------------------------------------------------
-# Load Generator Lazily
+# Load retriever at startup
+# ---------------------------------------------------------
+print("Loading retriever...")
+retriever = RbcRetriever()
+print("Retriever loaded.\n")
+
+
+# ---------------------------------------------------------
+# Lazy-load generator
 # ---------------------------------------------------------
 def load_generator():
-    """Load the Phi-3 generator only on first request."""
-    global generate_answer, generator_loaded
-
+    global _generate_answer, generator_loaded
     if not generator_loaded:
-        print("Loading generator model (Phi-3-Mini-4k-Instruct)...")
-        from src.generation.generator import generate_answer as _generate_answer
-
-        generate_answer = _generate_answer
+        print("Loading Phi-3.5 generator...")
+        from src.generation.generator import generate_answer as gen
+        _generate_answer = gen
         generator_loaded = True
-        print("Generator model loaded.\n")
+        print("Generator loaded.\n")
+
 
 # ---------------------------------------------------------
-# Helper — Clean retrieved FAQ context (anti-hallucination)
+# Retrieval Post-Processing
 # ---------------------------------------------------------
-def clean_context(text: str) -> str:
-    """Clean noisy FAQ text so model cannot hallucinate."""
-    if not isinstance(text, str):
-        return ""
-
-    # Remove URLs
-    text = re.sub(r"http\S+|www\S+", "", text)
-
-    # Remove extra whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Remove very long strings (marketing blocks)
-    if len(text) > 500:
-        text = text[:500]
-
-    return text
-
-
-def filter_retrieval(df: pd.DataFrame, score_threshold=0.45):
-    """Filter FAISS results to prevent irrelevant context."""
-    if df.empty:
+def clean_retrieval(results: list, min_score: float = 0.40, max_items: int = 4):
+    """
+    Filter retrieved chunks before sending to the generator.
+    """
+    if not results:
         return []
 
-    # Sort by similarity score descending
-    df = df.sort_values("score", ascending=False)
+    # Sort descending by similarity
+    results = sorted(results, key=lambda x: x["score"], reverse=True)
 
-    # Apply threshold
-    df = df[df["score"] >= score_threshold]
+    # Filter based on score threshold
+    filtered = [r for r in results if r["score"] >= min_score]
 
-    # Clean each answer
-    cleaned = []
-    for _, row in df.iterrows():
-        cleaned_text = clean_context(row["answer"])
-        if cleaned_text:
-            cleaned.append(cleaned_text)
+    # Extract only chunk text
+    chunks = [r["chunk"] for r in filtered]
 
-    return cleaned[:3]  # keep max 3 clean items
+    # Restrict count to avoid overloading the prompt
+    return chunks[:max_items]
 
 
 # ---------------------------------------------------------
-# Health Check
+# Health check endpoint
 # ---------------------------------------------------------
 @app.get("/health")
 def health():
@@ -116,48 +102,51 @@ def health():
         "status": "ok",
         "records": len(retriever.metadata),
         "generator_loaded": generator_loaded,
-        "model": "microsoft/Phi-3-Mini-4k-Instruct",
+        "retriever_model": "sentence-transformers/all-mpnet-base-v2",
+        "generator_model": "microsoft/Phi-3.5-mini-instruct",
     }
 
+
 # ---------------------------------------------------------
-# ASK Endpoint (Hallucination-Safe RAG)
+# Main RAG Endpoint
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
     query: str = Query(..., description="User question"),
-    top_k: int = Query(3, ge=1, le=10),
+    top_k: int = Query(5, ge=1, le=10),
 ):
     try:
-        # Step 1 — Retrieve
-        results_df = retriever.search(query, top_k=top_k)
+        # Step 1: Retrieve top-k semantic matches
+        retrieval_results = retriever.search(query, top_k=top_k)
 
-        # Step 2 — Clean + filter retrieved documents
-        cleaned_docs = filter_retrieval(results_df)
+        # Step 2: Clean and filter retrieved chunks
+        cleaned_chunks = clean_retrieval(retrieval_results)
 
-        # Step 3 — Lazy-load generator
+        # Step 3: Lazy-load generator
         if not generator_loaded:
             load_generator()
 
-        # Step 4 — Generate grounded answer
-        answer = generate_answer(query, cleaned_docs)
+        # Step 4: Generate grounded answer
+        answer = _generate_answer(query, cleaned_chunks)
 
-        # Step 5 — Response format
+        # Step 5: Return structured response
         return {
             "query": query,
             "answer": answer,
-            "context": results_df.to_dict(orient="records"),
-            "cleaned_used_context": cleaned_docs,  # DEBUG: remove later if you want
+            "retrieved": retrieval_results,       # full objects
+            "used_context": cleaned_chunks        # only chunks used
         }
 
     except Exception as e:
         return {"error": str(e)}
 
+
 # ---------------------------------------------------------
-# Run Server Locally
+# Run server if executed directly
 # ---------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000))
+        port=int(os.getenv("PORT", 8000)),
     )
