@@ -3,16 +3,13 @@ split_compound_faqs.py
 -------------------------------------------------------
 Splits compound FAQ entries into atomic Q/A units.
 
-Problem:
-    Scraped RBC FAQ pages sometimes merge multiple Q/A pairs into
-    a single large answer block. This module identifies and splits
-    those blocks safely without damaging valid answers.
-
-Principles:
-    • Never split unless structural cues are present
-    • Preserve valid Q–A units
-    • Handle bullet-style embedded questions
-    • Avoid naive regex splitting that breaks sentences
+Enhancements:
+    • Preserves provenance columns:
+        - url
+        - source
+        - retrieved_at
+    • Attaches a source_faq_index so each atomic FAQ can be traced
+      back to the original normalized FAQ row.
 """
 
 import re
@@ -25,9 +22,8 @@ from pathlib import Path
 # -------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[2]
 
-# Updated to use normalized data (correct sequence: clean → normalize → split)
+# Correct sequence: clean → normalize → split
 INPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_normalized.parquet"
-
 OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_refined.parquet"
 
 
@@ -35,9 +31,9 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_refined.parquet"
 # HELPER FUNCTIONS
 # -------------------------------------------------------
 QUESTION_START_PATTERNS = [
-    r"^[A-Z].*\?$",                    # Full standalone question
-    r"^-?\s*[A-Z].*?\?$",              # Bullet question: "- How do I apply?"
-    r"^\d+\.\s*[A-Z].*?\?$",           # Numbered question: "1. What is my limit?"
+    r"^[A-Z].*\?$",                     # Full standalone question
+    r"^-?\s*[A-Z].*?\?$",               # Bullet question: "- How do I apply?"
+    r"^\d+\.\s*[A-Z].*?\?$",            # Numbered question: "1. What is my limit?"
 ]
 
 
@@ -60,19 +56,13 @@ def extract_atomic_faqs(question: str, answer: str):
     """
     Identify sub-questions inside an answer and return
     a list of atomic {question, answer} pairs.
-
-    Strategy:
-        1. Split answer into lines
-        2. Detect lines that are standalone questions
-        3. Partition answer by these boundaries
-        4. Assign corresponding answer blocks
     """
     lines = [l.strip() for l in answer.split("\n") if l.strip()]
 
-    # Detect all lines that appear to be sub-questions
+    # Detect standalone question-like lines
     question_indices = [i for i, line in enumerate(lines) if is_question_line(line)]
 
-    # If no internal questions found, keep original
+    # No structure → return original FAQ as-is
     if len(question_indices) <= 1:
         return [{"question": question.strip(), "answer": answer.strip()}]
 
@@ -81,7 +71,7 @@ def extract_atomic_faqs(question: str, answer: str):
     for idx, q_index in enumerate(question_indices):
         sub_q = lines[q_index]
 
-        # Determine answer boundaries
+        # Determine answer segment boundaries
         start = q_index + 1
         end = question_indices[idx + 1] if idx + 1 < len(question_indices) else len(lines)
 
@@ -91,11 +81,12 @@ def extract_atomic_faqs(question: str, answer: str):
         if len(sub_a) < 10:
             continue
 
-        # Normalize question text
+        # Remove leading bullets/numbers
         sub_q = re.sub(r"^[-\d\.\s]+", "", sub_q).strip()
 
         atomic_pairs.append({"question": sub_q, "answer": sub_a})
 
+    # Fallback: if nothing valid produced
     if not atomic_pairs:
         return [{"question": question.strip(), "answer": answer.strip()}]
 
@@ -110,12 +101,32 @@ def refine_faqs():
     df = pd.read_parquet(INPUT_PATH)
     print(f"Loaded {len(df)} rows")
 
+    # Identify provenance columns that exist
+    provenance_cols = []
+    for col in ["url", "source", "retrieved_at"]:
+        if col in df.columns:
+            provenance_cols.append(col)
+
     refined_rows = []
 
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         q = row["question"]
         a = row["answer"]
-        refined_rows.extend(extract_atomic_faqs(q, a))
+
+        atomic_items = extract_atomic_faqs(q, a)
+
+        for item in atomic_items:
+            entry = {
+                "question": item["question"],
+                "answer": item["answer"],
+                "source_faq_index": idx,
+            }
+
+            # Propagate provenance values
+            for col in provenance_cols:
+                entry[col] = row[col]
+
+            refined_rows.append(entry)
 
     refined_df = pd.DataFrame(refined_rows).drop_duplicates(subset=["question", "answer"])
 
