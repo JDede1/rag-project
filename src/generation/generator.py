@@ -1,10 +1,8 @@
 """
 generator.py
 -------------------------------------
-Phi-3-Mini-4k-Instruct generator for the RAG pipeline.
-
-Exports:
-    - generate_answer(question, retrieved_docs)
+Hallucination-safe Phi-3-Mini-4k-Instruct generator
+for the RAG pipeline.
 """
 
 import os
@@ -27,17 +25,15 @@ if not HF_TOKEN:
     )
 
 # ---------------------------------------------------------
-# Model Config (Swapped to Phi-3-mini)
+# Model Config
 # ---------------------------------------------------------
 MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"🔹 Loading {MODEL_NAME} on {DEVICE} ...")
 
-# Load tokenizer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
 
-# Load model efficiently for CPU / GPU
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     token=HF_TOKEN,
@@ -45,7 +41,6 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto" if torch.cuda.is_available() else None,
 )
 
-# Text-generation pipeline (Accelerate-compatible)
 pipe = pipeline(
     "text-generation",
     model=model,
@@ -54,7 +49,7 @@ pipe = pipeline(
     temperature=0.2,
     top_p=0.9,
     repetition_penalty=1.1,
-    do_sample=False,
+    do_sample=False,  # deterministic
 )
 
 print("Phi-3-Mini-4k-Instruct loaded successfully.\n")
@@ -65,6 +60,7 @@ print("Phi-3-Mini-4k-Instruct loaded successfully.\n")
 def build_prompt(question: str, retrieved_docs: list[str]) -> str:
     """Compose a grounded RAG prompt for banking FAQs."""
     context = "\n\n".join(retrieved_docs)
+
     return dedent(f"""
     You are an expert assistant specializing in Canadian banking FAQs.
     Use ONLY the provided context to answer the question accurately.
@@ -78,10 +74,54 @@ def build_prompt(question: str, retrieved_docs: list[str]) -> str:
     """)
 
 # ---------------------------------------------------------
-# Answer Generation
+# Hallucination Protection Helpers
+# ---------------------------------------------------------
+def _extract_answer(raw_output: str) -> str:
+    """
+    Extract only the part *after* the final 'Answer:' marker.
+    This removes prompt echoes and chain-of-thought.
+    """
+    if "Answer:" in raw_output:
+        return raw_output.split("Answer:")[-1].strip()
+
+    # fallback: return last ~500 characters only
+    return raw_output[-500:].strip()
+
+
+def _is_grounded(answer: str, retrieved_docs: list[str]) -> bool:
+    """
+    Very strict grounding: answer must contain meaningful overlap
+    with retrieved context AND must not invent structure.
+    """
+    answer_lower = answer.lower()
+
+    # Remove trivial hallucinated patterns
+    forbidden = [
+        "document:", 
+        "the post",
+        "your task",
+        "using only information",
+        "<", ">",  # HTML noise
+    ]
+    if any(x in answer_lower for x in forbidden):
+        return False
+
+    # Minimal grounding check: answer must overlap context
+    context_text = " ".join(retrieved_docs).lower()
+
+    # Require at least 3 shared meaningful words to pass grounding
+    import re
+    tokens = re.findall(r"[a-zA-Z]{4,}", answer_lower)
+    overlap = sum(1 for t in tokens if t in context_text)
+
+    return overlap >= 2
+
+
+# ---------------------------------------------------------
+# Answer Generation (Hallucination-Proof)
 # ---------------------------------------------------------
 def generate_answer(question: str, retrieved_docs: list[str]) -> str:
-    """Generate a grounded, concise answer."""
+    """Generate a strictly grounded, concise answer."""
     if not retrieved_docs:
         return "I don’t know."
 
@@ -89,11 +129,22 @@ def generate_answer(question: str, retrieved_docs: list[str]) -> str:
 
     try:
         outputs = pipe(prompt)
-        text = outputs[0]["generated_text"]
-        answer = text.split("Answer:", 1)[-1].strip() if "Answer:" in text else text.strip()
-        return answer[:800].strip()
+        raw_output = outputs[0]["generated_text"]
+
+        # 🔹 extract clean answer
+        answer = _extract_answer(raw_output)
+
+        # 🔹 Enforce strict grounding
+        if not _is_grounded(answer, retrieved_docs):
+            return "I don’t know."
+
+        # 🔹 Final clean & trim
+        answer = answer.replace("\n\n", "\n").strip()
+        return answer[:600]  # safe limit
+
     except Exception as e:
         return f"Model error: {str(e)}"
+
 
 # ---------------------------------------------------------
 # Local Test Block
@@ -105,4 +156,3 @@ if __name__ == "__main__":
     ]
     q = "How do I report a lost credit card?"
     print("Generated Answer:\n", generate_answer(q, docs))
-
