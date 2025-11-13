@@ -1,13 +1,18 @@
 """
 split_compound_faqs.py
--------------------------------------
-Detects and splits compound FAQ answers that contain multiple question-answer pairs
-into separate, atomic entries suitable for embedding.
+-------------------------------------------------------
+Splits compound FAQ entries into atomic Q/A units.
 
-Input:
-    data/processed/rbc_faqs_clean.parquet
-Output:
-    data/processed/rbc_faqs_refined.parquet
+Problem:
+    Scraped RBC FAQ pages sometimes merge multiple Q/A pairs into
+    a single large answer block. This module identifies and splits
+    those blocks safely without damaging valid answers.
+
+Principles:
+    • Never split unless structural cues are present
+    • Preserve valid Q–A units
+    • Handle bullet-style embedded questions
+    • Avoid naive regex splitting that breaks sentences
 """
 
 import re
@@ -15,75 +20,115 @@ import pandas as pd
 from pathlib import Path
 
 
-# -------------------------
-# PATH CONFIG
-# -------------------------
+# -------------------------------------------------------
+# PATH CONFIGURATION
+# -------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[2]
 INPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_clean.parquet"
 OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_refined.parquet"
 
 
-# -------------------------
-# SPLITTING LOGIC
-# -------------------------
-def split_compound_answer(row):
+# -------------------------------------------------------
+# HELPER FUNCTIONS
+# -------------------------------------------------------
+QUESTION_START_PATTERNS = [
+    r"^[A-Z].*\?$",                    # Full-question line: "How do I reset my PIN?"
+    r"^-?\s*[A-Z].*?\?$",              # Bullet question: "- How do I apply?"
+    r"^\d+\.\s*[A-Z].*?\?$",           # Numbered question: "1. What is my limit?"
+]
+
+
+def is_question_line(text: str) -> bool:
     """
-    Identify and split compound Q&A sections where one 'answer' contains multiple sub-questions.
-
-    Example:
-    "Is there a number I can call...? Yes, you can call... How many corporate cards...?"
-    → becomes two separate entries.
+    Determine whether a line is likely a standalone question.
     """
-    question = row["question"].strip()
-    answer = row["answer"].strip()
+    stripped = text.strip()
+    if not stripped:
+        return False
 
-    # If the answer has more than one question mark, we’ll try to split it
-    if answer.count("?") > 1:
-        # Split by question marks followed by a capital letter (likely start of a new question)
-        segments = re.split(r"(?<=\?)\s+(?=[A-Z])", answer)
+    for pattern in QUESTION_START_PATTERNS:
+        if re.match(pattern, stripped):
+            return True
 
-        sub_faqs = []
-        for seg in segments:
-            seg = seg.strip()
-            if not seg:
-                continue
-
-            # Try to separate sub-question from its answer
-            # Pattern: "Q? A..."
-            match = re.match(r"^(.*?\?)\s*(.*)$", seg)
-            if match:
-                sub_q, sub_a = match.groups()
-                if len(sub_q) > 10 and len(sub_a) > 10:
-                    sub_faqs.append({"question": sub_q, "answer": sub_a})
-            else:
-                # If no clear sub-question, treat as continuation of previous answer
-                sub_faqs.append({"question": question, "answer": seg})
-
-        return sub_faqs
-
-    # Otherwise, return as-is
-    return [{"question": question, "answer": answer}]
+    return False
 
 
-# -------------------------
+def extract_atomic_faqs(question: str, answer: str):
+    """
+    Identify sub-questions inside an answer and return
+    a list of atomic {question, answer} pairs.
+
+    Strategy:
+        1. Split answer into lines
+        2. Detect lines that are standalone questions
+        3. Partition answer by these boundaries
+        4. Assign corresponding answer blocks
+    """
+    lines = [l.strip() for l in answer.split("\n") if l.strip()]
+
+    # Detect all lines that appear to be sub-questions
+    question_indices = [i for i, line in enumerate(lines) if is_question_line(line)]
+
+    # If no internal questions found, keep original
+    if len(question_indices) <= 1:
+        return [{"question": question.strip(), "answer": answer.strip()}]
+
+    # Build atomic units
+    atomic_pairs = []
+
+    for idx, q_index in enumerate(question_indices):
+        sub_q = lines[q_index]
+
+        # Determine answer block boundaries
+        start = q_index + 1
+        end = question_indices[idx + 1] if idx + 1 < len(question_indices) else len(lines)
+
+        sub_a_lines = lines[start:end]
+        sub_a = " ".join(sub_a_lines).strip()
+
+        # Validate minimum answer length
+        if len(sub_a) < 10:
+            continue
+
+        # Normalize question (strip bullets like "- " or "1. ")
+        sub_q = re.sub(r"^[-\d\.\s]+", "", sub_q).strip()
+
+        atomic_pairs.append({"question": sub_q, "answer": sub_a})
+
+    # Fallback: if splitting produced nothing valid, keep original
+    if not atomic_pairs:
+        return [{"question": question.strip(), "answer": answer.strip()}]
+
+    return atomic_pairs
+
+
+# -------------------------------------------------------
 # MAIN PIPELINE
-# -------------------------
+# -------------------------------------------------------
 def refine_faqs():
-    print(f"📂 Loading {INPUT_PATH.name}...")
+    print(f"Loading {INPUT_PATH.name}...")
     df = pd.read_parquet(INPUT_PATH)
-    print(f"Loaded {len(df)} records")
+    print(f"Loaded {len(df)} rows")
 
     refined_rows = []
+
     for _, row in df.iterrows():
-        refined_rows.extend(split_compound_answer(row))
+        q = row["question"]
+        a = row["answer"]
+        refined_rows.extend(extract_atomic_faqs(q, a))
 
     refined_df = pd.DataFrame(refined_rows).drop_duplicates(subset=["question", "answer"])
+
+    # Clean whitespace again after reconstructing blocks
     refined_df["question"] = refined_df["question"].str.strip()
     refined_df["answer"] = refined_df["answer"].str.strip()
 
-    print(f"✅ Refined to {len(refined_df)} atomic FAQ entries")
+    print(f"Refined to {len(refined_df)} atomic FAQ entries")
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     refined_df.to_parquet(OUTPUT_PATH, index=False)
-    print(f"💾 Saved refined dataset → {OUTPUT_PATH}")
+
+    print(f"Saved refined dataset to: {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
