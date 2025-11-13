@@ -51,7 +51,7 @@ app.add_middleware(
 # ---------------------------------------------------------
 print("🔹 Initializing retriever...")
 retriever = RbcRetriever()
-print("✅ Retriever ready.\n")
+print("Retriever ready.\n")
 
 # ---------------------------------------------------------
 # Lazy-load the generator on first request
@@ -68,7 +68,7 @@ def load_generator():
 
         generate_answer = _generate_answer
         generator_loaded = True
-        print("✅ Generator model loaded.\n")
+        print("Generator model loaded.\n")
 
 # ---------------------------------------------------------
 # Health Check
@@ -96,18 +96,18 @@ def ask(
     Step 3: Grounded generation  
     """
     try:
-        # 🔍 Step 1 — Retrieve from FAISS
+        # Step 1 — Retrieve from FAISS
         results_df = retriever.search(query, top_k=top_k)
         retrieved_docs = results_df["answer"].tolist()
 
-        # 🧠 Step 2 — Load generator if needed
+        # Step 2 — Load generator if needed
         if not generator_loaded:
             load_generator()
 
-        # 🧠 Step 3 — Generate grounded answer
+        # Step 3 — Generate grounded answer
         answer = generate_answer(query, retrieved_docs)
 
-        # 📦 Step 4 — Respond
+        # Step 4 — Respond
         return {
             "query": query,
             "answer": answer,
@@ -126,3 +126,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000))
     )
+
