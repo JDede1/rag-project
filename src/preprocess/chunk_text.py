@@ -7,13 +7,13 @@ Purpose:
     Convert refined FAQ entries into retrieval-friendly chunks suitable
     for embedding and FAISS indexing.
 
-Enhancements in this version:
+This version:
+    • Uses smaller, tighter chunks optimized for mpnet embeddings
     • Preserves provenance fields:
         - source_faq_index
         - url
         - source
         - retrieved_at
-    • Ensures metadata flows into embedding + FAISS layers
 """
 
 import re
@@ -35,6 +35,7 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faq_chunks.parquet"
 # -------------------------------------------------------
 SENTENCE_REGEX = r"(?<=[.!?])\s+(?=[A-Z])"
 
+
 def split_into_sentences(text: str) -> List[str]:
     if not isinstance(text, str) or not text.strip():
         return []
@@ -45,11 +46,13 @@ def split_into_sentences(text: str) -> List[str]:
 # -------------------------------------------------------
 # CHUNK BUILDING LOGIC
 # -------------------------------------------------------
-def build_chunks_for_faq(question: str,
-                         answer: str,
-                         provenance: Dict,
-                         max_chars: int = 600,
-                         min_chars: int = 150) -> List[Dict]:
+def build_chunks_for_faq(
+    question: str,
+    answer: str,
+    provenance: Dict,
+    max_chars: int = 300,
+    min_chars: int = 80,
+) -> List[Dict]:
     """
     Chunk a single Q/A pair using sentence-based grouping.
 
@@ -68,15 +71,21 @@ def build_chunks_for_faq(question: str,
     if not sentences:
         return []
 
-    chunks = []
+    # First pass: group sentences into preliminary chunks under max_chars
+    chunks: List[str] = []
     current = ""
 
     for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+
         if not current:
             current = sent
             continue
 
-        if len(current) + len(sent) + 1 <= max_chars:
+        # If adding this sentence stays within max_chars, append
+        if len(current) + 1 + len(sent) <= max_chars:
             current += " " + sent
         else:
             chunks.append(current.strip())
@@ -85,28 +94,33 @@ def build_chunks_for_faq(question: str,
     if current:
         chunks.append(current.strip())
 
-    # Merge small chunks
-    merged = []
+    # Second pass: merge very short chunks into neighbors
+    merged: List[str] = []
     buffer = ""
 
     for chunk in chunks:
         if len(chunk) < min_chars:
-            buffer += " " + chunk
+            # Accumulate short fragments
+            if buffer:
+                buffer += " " + chunk
+            else:
+                buffer = chunk
             continue
 
-        if buffer.strip():
+        # If there is a buffered short chunk, flush it first
+        if buffer:
             merged.append(buffer.strip())
             buffer = ""
 
         merged.append(chunk.strip())
 
-    if buffer.strip():
+    if buffer:
         merged.append(buffer.strip())
 
     # Build final chunk entries (with provenance)
-    output = []
+    output: List[Dict] = []
     for chunk in merged:
-        entry = {
+        entry: Dict = {
             "question": question.strip(),
             "chunk": chunk.strip(),
         }
@@ -133,15 +147,13 @@ def chunk_faq_dataset():
         if col in df.columns:
             provenance_cols.append(col)
 
-    all_chunks = []
+    all_chunks: List[Dict] = []
 
     for _, row in df.iterrows():
         q = row["question"]
         a = row["answer"]
 
-        # Collect provenance metadata for this FAQ row
         provenance = {col: row[col] for col in provenance_cols}
-
         faq_chunks = build_chunks_for_faq(q, a, provenance)
         all_chunks.extend(faq_chunks)
 
