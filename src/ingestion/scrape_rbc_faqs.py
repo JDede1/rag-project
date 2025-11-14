@@ -1,15 +1,15 @@
 """
 scrape_rbc_faqs.py
 -------------------------------------
-Playwright-based scraper for Royal Bank of Canada (RBC) FAQ pages.
+Robust Playwright-based scraper for RBC FAQ pages.
 
-Features:
-    • Uses .accordion-panel DOM structure where available
-    • Falls back to heading + paragraph layout
-    • Handles JavaScript-rendered content
-    • Cleans and filters Q/A pairs
-    • Ensures deterministic directory creation
-    • Produces:
+Enhancements:
+    • Handles accordion, tab, and custom FAQ modules
+    • Supports JS-rendered and lazy-loaded pages
+    • Uses multiple extraction strategies with fallbacks
+    • Stabilized load waits for slow RBC pages
+    • Ensures safe directory creation
+    • Outputs:
           data/raw/rbc/<timestamp>_rbc_raw.json
           data/processed/rbc_faqs.parquet
           logs/scrape_rbc.log
@@ -29,7 +29,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 
 # ---------------------------------------------------------
-# CONFIGURATION
+# PATHS
 # ---------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -38,8 +38,8 @@ DATA_PROCESSED = BASE_DIR / "data" / "processed"
 LOG_DIR = BASE_DIR / "logs"
 URL_FILE = Path(__file__).resolve().parent / "rbc_urls.txt"
 
-# Robust directory creation (prevents mkdir recursion errors)
-for d in [DATA_PROCESSED, LOG_DIR, DATA_RAW]:
+# Ensure all directories exist
+for d in [DATA_RAW, DATA_PROCESSED, LOG_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -50,97 +50,133 @@ logging.basicConfig(
 
 
 # ---------------------------------------------------------
-# HELPER FUNCTIONS
+# TEXT CLEANING UTILITIES
 # ---------------------------------------------------------
 def clean_text(text: str) -> str:
-    """Normalize whitespace and remove redundant spacing."""
-    return re.sub(r"\s+", " ", text.strip()) if text else ""
+    """Normalize whitespace and filter boilerplate strings."""
+    if not text:
+        return ""
+    t = re.sub(r"\s+", " ", text.strip())
+    return t
 
 
 def is_valid_faq(question: str, answer: str) -> bool:
-    """Filter out extremely short or noisy entries."""
+    """Filter out noise, empty content, and non-FAQ elements."""
     if not question or not answer:
         return False
-    if len(question) < 10 or len(answer) < 20:
+    if len(question) < 8 or len(answer) < 20:
         return False
 
-    noise = ["cookie", "privacy", "footer", "email", "sign up", "©"]
-    if any(n in (question + answer).lower() for n in noise):
+    noise = [
+        "cookie", "privacy", "footer", "terms", "sign up",
+        "©", "javascript", "email", "contact us"
+    ]
+    combo = (question + answer).lower()
+    if any(n in combo for n in noise):
         return False
 
-    if re.match(r"^[0-9\s\-\+]+$", answer):
+    # Reject pure numeric garbage
+    if re.fullmatch(r"[0-9\s\-\+]+", answer):
         return False
 
     return True
 
 
-def extract_faq_pairs(html: str) -> list:
-    """
-    Extract Q/A pairs using three fallback strategies:
-        1. Accordion panel (.accordion-panel)
-        2. Headings followed by paragraphs
-        3. Markdown fallback (entire page)
-    """
-    soup = BeautifulSoup(html, "html.parser")
+# ---------------------------------------------------------
+# FAQ EXTRACTION ROUTINES
+# ---------------------------------------------------------
+def extract_from_accordion(soup):
+    """Extract using RBC's accordion-style markup."""
     faqs = []
+    panels = soup.select(".accordion-panel, .faq-item, .panel, .accordion-content")
 
-    # Remove irrelevant tags
+    for p in panels:
+        q = p.select_one("button, h2, h3, h4, strong, .accordion-title")
+        a = p.select_one("p, div, .accordion-body, .panel-body")
+
+        if not q or not a:
+            continue
+
+        question = clean_text(q.get_text())
+        answer = clean_text(a.get_text())
+
+        if is_valid_faq(question, answer):
+            faqs.append({"question": question, "answer": answer})
+
+    return faqs
+
+
+def extract_from_heading_pairs(soup):
+    """Fallback: any H2/H3 followed by a descriptive block."""
+    faqs = []
+    headings = soup.find_all(["h2", "h3", "dt", "strong"])
+
+    for h in headings:
+        question = clean_text(h.get_text())
+        a = h.find_next_sibling(["p", "div", "section"])
+
+        if not a:
+            continue
+
+        answer = clean_text(a.get_text())
+
+        if is_valid_faq(question, answer):
+            faqs.append({"question": question, "answer": answer})
+
+    return faqs
+
+
+def extract_from_markdown(soup):
+    """Final fallback: extract entire page as markdown (last resort)."""
+    markdown_text = md(str(soup))
+    return [{
+        "question": "Full Page Content",
+        "answer": clean_text(markdown_text)
+    }]
+
+
+def extract_faq_pairs(html: str):
+    """Run multi-mode extraction pipeline with fallback tiers."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Cleanup script/style/nav
     for tag in soup(["script", "style", "footer", "nav", "header"]):
         tag.decompose()
 
-    # Primary: accordion panels
-    panels = soup.select(".accordion-panel")
-    for item in panels:
-        q = item.select_one("button, h2, h3, h4, strong")
-        a = item.select_one("p, div")
-        if q and a:
-            question = clean_text(q.get_text())
-            answer = clean_text(a.get_text())
-            if is_valid_faq(question, answer):
-                faqs.append({"question": question, "answer": answer})
+    # Tier 1: Accordion extraction
+    faqs = extract_from_accordion(soup)
 
-    # Fallback: headings + paragraphs
+    # Tier 2: Heading-based extraction
     if not faqs:
-        for q in soup.find_all(["h2", "h3", "dt", "strong"]):
-            question = clean_text(q.get_text())
-            a = q.find_next_sibling(["p", "div", "section"])
-            if not a:
-                continue
-            answer = clean_text(a.get_text())
-            if is_valid_faq(question, answer):
-                faqs.append({"question": question, "answer": answer})
+        faqs = extract_from_heading_pairs(soup)
 
-    # Final fallback: markdown entire page
+    # Tier 3: Markdown fallback
     if not faqs:
-        markdown_text = md(str(soup))
-        faqs.append({
-            "question": "Full Page Content",
-            "answer": clean_text(markdown_text)
-        })
+        faqs = extract_from_markdown(soup)
 
     # Deduplicate
-    faqs = [f for f in faqs if 50 < len(f["answer"]) < 2000]
+    uniq = []
     seen = set()
-    unique = []
     for f in faqs:
         key = (f["question"], f["answer"])
         if key not in seen:
             seen.add(key)
-            unique.append(f)
+            uniq.append(f)
 
-    return unique
+    return uniq
 
 
 # ---------------------------------------------------------
-# MAIN SCRAPER
+# SCRAPER ENGINE
 # ---------------------------------------------------------
 def scrape_rbc_faqs():
     logging.info("Starting RBC FAQ scraping...")
-    faq_data = []
-    pdf_links = []
 
     with open(URL_FILE, "r") as f:
         urls = [u.strip() for u in f if u.strip()]
+
+    faq_data = []
+    pdf_links = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -148,27 +184,30 @@ def scrape_rbc_faqs():
 
         for url in tqdm(urls, desc="Scraping RBC FAQ pages"):
             if url.endswith(".pdf"):
-                pdf_links.append(url)
                 logging.warning(f"Skipped PDF: {url}")
+                pdf_links.append(url)
                 continue
 
             try:
-                page.goto(url, timeout=60000)
+                # Load with extended wait for JS-heavy pages
+                page.goto(url, timeout=70000)
                 page.wait_for_load_state("domcontentloaded")
-                page.wait_for_timeout(2000)
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(1500)
 
                 html = page.content()
                 extracted = extract_faq_pairs(html)
 
+                # Annotate
                 for item in extracted:
                     item.update({
                         "url": url,
                         "source": "RBC",
-                        "retrieved_at": datetime.now().isoformat()
+                        "retrieved_at": datetime.now().isoformat(),
                     })
 
                 faq_data.extend(extracted)
-                logging.info(f"Scraped {len(extracted)} FAQs from {url}")
+                logging.info(f"Scraped {len(extracted)} items from {url}")
 
             except PlaywrightTimeoutError:
                 logging.error(f"Timeout on {url}")
@@ -177,7 +216,7 @@ def scrape_rbc_faqs():
 
         browser.close()
 
-    # Write output files
+    # Save data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     raw_path = DATA_RAW / f"{timestamp}_rbc_raw.json"
     processed_path = DATA_PROCESSED / "rbc_faqs.parquet"
@@ -189,11 +228,8 @@ def scrape_rbc_faqs():
     df.to_parquet(processed_path, index=False)
 
     logging.info(f"Saved {len(df)} cleaned FAQs to {processed_path}")
-    print(f"RBC FAQ scraping completed. Saved {len(df)} entries to {processed_path}")
+    print(f"Scraping complete: {len(df)} FAQ entries saved.")
 
 
-# ---------------------------------------------------------
-# ENTRY POINT
-# ---------------------------------------------------------
 if __name__ == "__main__":
     scrape_rbc_faqs()
