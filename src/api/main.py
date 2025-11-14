@@ -3,41 +3,38 @@ main.py
 -------------------------------------------------------
 FastAPI RAG backend for RBC banking FAQs.
 
-Phase 4 upgrades:
-    • Uses chunk-level retriever (mpnet embeddings)
-    • Uses Phi-3.5-Mini-Instruct (chat model)
-    • Strict grounding: model answers ONLY from retrieved chunks
-    • JSON-friendly output structure
-    • Cleaner, safer, predictable behavior
+Upgrades:
+    • Uses Qwen2.5-0.5B-Instruct (fast, stable, no timeouts)
+    • Loads generator at startup (not lazy-loaded)
+    • Uses strict chunk-level grounding
+    • Works smoothly with Cloudflare tunnels
+    • Clean JSON-safe output
 """
 
 import sys
 import os
-from pathlib import Path
 
 # ---------------------------------------------------------
-# Ensure imports work in Colab / relative repo structure
+# Ensure imports work (Colab + VS Code)
 # ---------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import pandas as pd
 
 from src.retrieval.search_engine import RbcRetriever
-
-# Lazy-loaded generator
-_generate_answer = None
-generator_loaded = False
+from src.generation.generator import generate_answer   # Qwen 0.5B loaded immediately
 
 
 # ---------------------------------------------------------
-# FastAPI initialization
+# Initialize FastAPI
 # ---------------------------------------------------------
 app = FastAPI(
     title="RBC RAG API",
-    description="RBC Banking Retrieval-Augmented Generation using FAISS + Phi-3.5",
-    version="2.0.0",
+    description="Retrieval-Augmented Generation using FAISS + Qwen2.5-0.5B-Instruct",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -54,56 +51,41 @@ app.add_middleware(
 # ---------------------------------------------------------
 print("Loading retriever...")
 retriever = RbcRetriever()
-print("Retriever loaded.\n")
+print("Retriever loaded.")
 
 
 # ---------------------------------------------------------
-# Lazy-load generator
+# Clean & Filter retrieved chunks
 # ---------------------------------------------------------
-def load_generator():
-    global _generate_answer, generator_loaded
-    if not generator_loaded:
-        print("Loading Phi-3.5 generator...")
-        from src.generation.generator import generate_answer as gen
-        _generate_answer = gen
-        generator_loaded = True
-        print("Generator loaded.\n")
-
-
-# ---------------------------------------------------------
-# Retrieval Post-Processing
-# ---------------------------------------------------------
-def clean_retrieval(results: list, min_score: float = 0.40, max_items: int = 4):
+def clean_retrieval(df: pd.DataFrame, score_threshold: float = 0.40, max_items: int = 4):
     """
-    Filter retrieved chunks before sending to the generator.
+    Convert FAISS results → clean chunk list for generator.
     """
-    if not results:
+    if df.empty:
         return []
 
-    # Sort descending by similarity
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
+    # highest scores first
+    df = df.sort_values("score", ascending=False)
 
-    # Filter based on score threshold
-    filtered = [r for r in results if r["score"] >= min_score]
+    # apply score cutoff
+    df = df[df["score"] >= score_threshold]
 
-    # Extract only chunk text
-    chunks = [r["chunk"] for r in filtered]
+    # extract chunk text
+    chunks = df["chunk"].tolist()
 
-    # Restrict count to avoid overloading the prompt
     return chunks[:max_items]
 
 
 # ---------------------------------------------------------
-# Health check endpoint
+# Health Endpoint
 # ---------------------------------------------------------
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "records": len(retriever.metadata),
-        "generator_loaded": generator_loaded,
         "retriever_model": "sentence-transformers/all-mpnet-base-v2",
-        "generator_model": "microsoft/Phi-3.5-mini-instruct",
+        "generator_model": "Qwen2.5-0.5B-Instruct",
     }
 
 
@@ -116,25 +98,21 @@ def ask(
     top_k: int = Query(5, ge=1, le=10),
 ):
     try:
-        # Step 1: Retrieve top-k semantic matches
-        retrieval_results = retriever.search(query, top_k=top_k)
+        # Step 1: retrieve semantic matches
+        retrieval_df = retriever.search(query, top_k=top_k)
 
-        # Step 2: Clean and filter retrieved chunks
-        cleaned_chunks = clean_retrieval(retrieval_results)
+        # Step 2: convert for generator
+        cleaned_chunks = clean_retrieval(retrieval_df)
 
-        # Step 3: Lazy-load generator
-        if not generator_loaded:
-            load_generator()
+        # Step 3: generate grounded answer
+        answer = generate_answer(query, cleaned_chunks)
 
-        # Step 4: Generate grounded answer
-        answer = _generate_answer(query, cleaned_chunks)
-
-        # Step 5: Return structured response
+        # Step 4: return structured response
         return {
             "query": query,
             "answer": answer,
-            "retrieved": retrieval_results,       # full objects
-            "used_context": cleaned_chunks        # only chunks used
+            "retrieved": retrieval_df.to_dict(orient="records"),
+            "used_context": cleaned_chunks,
         }
 
     except Exception as e:
@@ -142,7 +120,7 @@ def ask(
 
 
 # ---------------------------------------------------------
-# Run server if executed directly
+# Run locally
 # ---------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run(
