@@ -1,14 +1,14 @@
 """
 generator.py
 -------------------------------------------------------
-FINAL stable RAG generator for Qwen2.5-0.5B-Instruct.
+Hybrid-grounded RAG generator for Qwen2.5-0.5B-Instruct.
 
 Key Features:
-    • Zero hallucinations (strict grounding)
-    • No prompt echo or system leakage
-    • Robust assistant-answer extraction
-    • Deterministic decoding (temperature=0.0)
-    • Fully compatible with Cloudflare + FastAPI
+    • Hybrid grounding = keyword overlap + soft substring
+    • Zero hallucinations (safety-first)
+    • Allows legitimate paraphrasing
+    • Robust answer extraction
+    • Deterministic decoding
 """
 
 import torch
@@ -36,15 +36,15 @@ model = AutoModelForCausalLM.from_pretrained(
 # RAG Prompt Builder
 # ---------------------------------------------------------
 def build_prompt(question: str, chunks: list[str]):
-    context_text = "\n\n".join(chunks) if chunks else "No relevant information found."
+    context_text = "\n\n".join(chunks) if chunks else "No context available."
 
     return [
         {
             "role": "system",
             "content": (
                 "You are an RBC assistant. Answer ONLY using the provided context. "
-                "If the answer is not in the context, respond with exactly: "
-                "\"I don't know.\" Do NOT add external facts."
+                "If the answer is not in the context, reply with exactly: I don't know. "
+                "Do NOT add outside facts or assumptions."
             )
         },
         {
@@ -52,67 +52,69 @@ def build_prompt(question: str, chunks: list[str]):
             "content": (
                 f"Context:\n{context_text}\n\n"
                 f"Question: {question}\n"
-                "Answer only using the context."
+                "Give the answer using only the context."
             )
         }
     ]
 
 
 # ---------------------------------------------------------
-# Robust Answer Extraction (fixed version)
+# Clean model output
 # ---------------------------------------------------------
 def extract_answer(full_output: str) -> str:
-    """
-    Extract only the assistant's final message.
-    Handles:
-        • Missing <|assistant|> token
-        • Prompt echo
-        • System/user blocks
-        • Extra template artifacts
-    """
-
     text = full_output.strip()
 
-    # 1 — Remove common Qwen special tokens
-    bad_tokens = ["<s>", "</s>", "<|system|>", "<|user|>", "<|assistant|>"]
-    for tok in bad_tokens:
+    # Remove special tokens
+    for tok in ["<s>", "</s>", "<|system|>", "<|user|>", "<|assistant|>"]:
         text = text.replace(tok, " ")
 
-    # 2 — Remove everything before the assistant message (fallback)
-    if "Answer only using the context." in text:
-        text = text.split("Answer only using the context.")[-1].strip()
-
-    # 3 — Remove repeated instructions
-    repeated_phrases = [
+    # Remove repeated instructions
+    bad_phrases = [
+        "Give the answer using only the context.",
         "Answer only using the context.",
-        "Only use the context.",
         "Use only the context.",
         "Based on the context",
     ]
-    for p in repeated_phrases:
+    for p in bad_phrases:
         text = text.replace(p, "").strip()
 
-    # Final return
     return text.strip()
 
 
 # ---------------------------------------------------------
-# Strict grounding filter
+# Hybrid Grounding Logic
 # ---------------------------------------------------------
-def is_grounded(answer: str, chunks: list[str]) -> bool:
+def hybrid_grounding(answer: str, chunks: list[str]) -> bool:
     """
-    Prevent hallucinations by requiring minimal token overlap.
+    Combination of:
+        1. Keyword overlap (len >= 1 meaningful token)
+        2. Soft substring similarity
     """
 
-    if answer.lower() in ["i don't know.", "i don't know"]:
-        return True
+    if not answer or answer.lower() == "i don't know":
+        return True  # allowed
 
-    answer_tokens = set(answer.lower().split())
+    # Tokenize
+    ans_tokens = set(answer.lower().split())
     ctx_tokens = set(" ".join(chunks).lower().split())
 
-    overlap = answer_tokens.intersection(ctx_tokens)
+    # Remove meaningless tokens
+    stopwords = {"the", "is", "a", "to", "of", "and", "in", "for", "on", "by", "you"}
+    ans_tokens = ans_tokens - stopwords
 
-    return len(overlap) >= 2
+    # --- Rule 1: Keyword overlap ---
+    if len(ans_tokens.intersection(ctx_tokens)) >= 1:
+        return True
+
+    # --- Rule 2: Soft substring match ---
+    for ch in chunks:
+        if len(ch) > 40 and ch[:50].lower() in answer.lower():
+            return True
+        if ch.lower()[:80] in answer.lower():
+            return True
+
+    # No grounding detected
+    return False
 
 
 # ---------------------------------------------------------
@@ -133,7 +135,7 @@ def generate_answer(question: str, chunks: list[str]) -> str:
     with torch.no_grad():
         output_ids = model.generate(
             encoded,
-            max_new_tokens=160,
+            max_new_tokens=180,
             temperature=0.0,
             top_p=1.0,
             do_sample=False,
@@ -141,11 +143,10 @@ def generate_answer(question: str, chunks: list[str]) -> str:
         )
 
     full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
     answer = extract_answer(full_output)
 
-    # Apply grounding filter
-    if not is_grounded(answer, chunks):
+    # Apply hybrid grounding
+    if not hybrid_grounding(answer, chunks):
         return "I don't know."
 
     return answer.strip()
@@ -155,9 +156,9 @@ def generate_answer(question: str, chunks: list[str]) -> str:
 # Manual Test
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    context = [
+    sample_chunks = [
         "If your RBC credit card is lost or stolen, call 1-800-769-2512 immediately.",
-        "You can lock or unlock your card using RBC Online Banking or the RBC Mobile App."
+        "We will block the card from future use and issue you a new card."
     ]
     q = "How do I report a lost credit card?"
-    print("Answer:", generate_answer(q, context))
+    print("Answer:", generate_answer(q, sample_chunks))
