@@ -97,5 +97,22 @@
     "scroll_steps": 6,
     "scroll_distance": 600,
     "scroll_delay_ms": 200
+  },
+
+  "overrides": {
+    "__COMMENT__": "URL-specific overrides go here. Example structure:",
+    "__EXAMPLE__": {
+      "https://www.example.com/faqs.html": {
+        "use_containers": true,
+        "use_headings": true,
+        "allow_markdown_fallback": false,
+        "min_question_length": 10,
+        "min_answer_length": 20,
+        "container_selectors": [".custom-container"],
+        "question_selectors": ["h2", ".custom-question"],
+        "answer_selectors": ["p", ".custom-answer"],
+        "heading_fallbacks": ["h2", "h3"]
+      }
+    }
   }
 }
