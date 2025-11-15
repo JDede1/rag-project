@@ -1,22 +1,19 @@
 """
 scrape_rbc_faqs.py
 -------------------------------------
-Robust Playwright-based scraper for RBC FAQ pages.
+JSON-driven Playwright scraper for RBC FAQ pages.
 
-Enhancements:
-    • Handles accordion, tab, and custom FAQ modules
-    • Supports JS-rendered and lazy-loaded pages
-    • Uses multiple extraction strategies with fallbacks
-    • Stabilized load waits for slow RBC pages
-    • Ensures safe directory creation
-    • Outputs:
-          data/raw/rbc/<timestamp>_rbc_raw.json
-          data/processed/rbc_faqs.parquet
-          logs/scrape_rbc.log
+Features:
+    • Loads all selectors from faq_extraction_patterns.json
+    • Extracts FAQs using accordion structures, FAQ blocks, headings
+    • Applies robust fallback markdown extraction
+    • Expands accordions interactively
+    • Handles nested/compound answer blocks
+    • Saves raw + processed output
 """
 
-import re
 import json
+import re
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -37,26 +34,38 @@ DATA_RAW = BASE_DIR / "data" / "raw" / "rbc"
 DATA_PROCESSED = BASE_DIR / "data" / "processed"
 LOG_DIR = BASE_DIR / "logs"
 URL_FILE = Path(__file__).resolve().parent / "rbc_urls.txt"
+PATTERN_FILE = Path(__file__).resolve().parent / "faq_extraction_patterns.json"
 
-# Ensure all directories exist
+# Ensure directories exist
 for d in [DATA_RAW, DATA_PROCESSED, LOG_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     filename=LOG_DIR / "scrape_rbc.log",
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
 
 # ---------------------------------------------------------
-# TEXT CLEANING UTILITIES
+# LOAD EXTRACTION PATTERNS
+# ---------------------------------------------------------
+with open(PATTERN_FILE, "r", encoding="utf-8") as f:
+    patterns = json.load(f)
+
+selectors = patterns["selectors"]
+rules = patterns["extraction"]
+interactive = patterns["interactive_expansion"]
+
+
+# ---------------------------------------------------------
+# UTILITIES
 # ---------------------------------------------------------
 def clean_text(text: str) -> str:
-    """Normalize whitespace and strip basic boilerplate noise."""
+    """Normalize whitespace and strip noise characters."""
     if not text:
         return ""
-    # Normalize common whitespace artifacts
+
     t = (
         text.replace("\xa0", " ")
         .replace("\u200b", "")
@@ -66,28 +75,21 @@ def clean_text(text: str) -> str:
 
 
 def is_valid_faq(question: str, answer: str) -> bool:
-    """Filter out noise, empty content, and non-FAQ elements."""
+    """Basic FAQ sanity checker using JSON rules."""
     if not question or not answer:
         return False
 
-    # Minimal length constraints (keep slightly short answers)
-    if len(question.strip()) < 8 or len(answer.strip()) < 15:
+    if len(question.strip()) < rules["min_question_length"]:
         return False
 
-    # Noise patterns – keep this conservative to avoid dropping valid FAQs
-    noise = [
-        "cookie",
-        "privacy",
-        "footer",
-        "terms and conditions",
-        "all rights reserved",
-        "javascript",
-    ]
+    if len(answer.strip()) < rules["min_answer_length"]:
+        return False
+
     combo = (question + " " + answer).lower()
-    if any(n in combo for n in noise):
+    if any(noise in combo for noise in rules["noise_patterns"]):
         return False
 
-    # Reject pure numeric / symbol garbage
+    # numeric garbage
     if re.fullmatch(r"[0-9\s\-\+\(\)]+", answer.strip()):
         return False
 
@@ -95,159 +97,123 @@ def is_valid_faq(question: str, answer: str) -> bool:
 
 
 # ---------------------------------------------------------
-# FAQ EXTRACTION ROUTINES
+# EXTRACTION HELPERS
 # ---------------------------------------------------------
-def extract_from_accordion(soup: BeautifulSoup):
-    """
-    Extract using accordion-style markup commonly used in FAQs.
-
-    Uses selectors that match what we already inspect in test_playwright_visual.py:
-        .accordion-panel, .accordion-item, .accordion, .accordion-content,
-        .panel, .panel-body
-    """
-    faqs = []
-    panels = soup.select(
-        ".accordion-panel, .accordion-item, .accordion, "
-        ".accordion-content, .panel, .panel-body"
+def parse_containers(soup: BeautifulSoup):
+    """Dynamically gather FAQ containers based on JSON selectors."""
+    css = (
+        selectors["accordion_containers"]
+        + selectors["faq_blocks"]
     )
-
-    for p in panels:
-        q = p.select_one("button, h2, h3, h4, strong, .accordion-title, .question, .faq-question")
-        a = p.select_one("p, div, .accordion-body, .panel-body, .answer, .faq-answer")
-
-        if not q or not a:
-            continue
-
-        question = clean_text(q.get_text(separator=" ", strip=True))
-        answer = clean_text(a.get_text(separator=" ", strip=True))
-
-        if is_valid_faq(question, answer):
-            faqs.append({"question": question, "answer": answer})
-
-    return faqs
+    joined = ", ".join(css)
+    return soup.select(joined)
 
 
-def extract_from_faq_blocks(soup: BeautifulSoup):
-    """
-    Extract FAQs from generic FAQ block structures:
-        .faq, .faq-item, .faq-container, .faq-block, .collapse-item
-    """
-    faqs = []
-    containers = soup.select(".faq, .faq-item, .faq-container, .faq-block, .collapse-item")
-
-    for block in containers:
-        q = block.select_one(
-            "h2, h3, h4, strong, button, .question, .faq-question"
-        )
-        a = block.select_one(
-            "p, div, .answer, .faq-answer, .accordion-content, .panel-body"
-        )
-
-        if not q or not a:
-            continue
-
-        question = clean_text(q.get_text(separator=" ", strip=True))
-        answer = clean_text(a.get_text(separator=" ", strip=True))
-
-        if is_valid_faq(question, answer):
-            faqs.append({"question": question, "answer": answer})
-
-    return faqs
+def extract_question(block: Tag):
+    """Find the question element using JSON selectors."""
+    q_sel = selectors["question_elements"]
+    q = block.select_one(", ".join(q_sel))
+    return clean_text(q.get_text(" ", strip=True)) if q else None
 
 
-def _collect_answer_block(start_tag: Tag) -> str:
-    """
-    Collect answer text from the siblings following a heading until another heading-like
-    element is reached. This allows answers that are wrapped in multiple nested <div>s.
-    """
+def extract_answer(block: Tag):
+    """Extract answer using JSON selectors."""
+    a_sel = selectors["answer_elements"]
+    a = block.select_one(", ".join(a_sel))
+    return clean_text(a.get_text(" ", strip=True)) if a else None
+
+
+def deep_collect_answer(start_tag: Tag) -> str:
+    """Fallback multi-sibling DOM walk for heading-based answers."""
     texts = []
     node = start_tag.next_sibling
 
     while node:
-        # Stop if we hit another heading-like tag (new question)
-        if isinstance(node, Tag) and node.name in ["h1", "h2", "h3", "h4", "dt", "strong"]:
+        if isinstance(node, Tag) and node.name in selectors["heading_fallbacks"]:
             break
 
         if isinstance(node, Tag):
-            node_text = node.get_text(separator=" ", strip=True)
-            if node_text:
-                texts.append(node_text)
+            t = node.get_text(" ", strip=True)
+            if t:
+                texts.append(t)
 
         node = node.next_sibling
 
     return clean_text(" ".join(texts))
 
 
-def extract_from_heading_pairs(soup: BeautifulSoup):
-    """
-    Fallback: any H2/H3/DT/STRONG followed by a descriptive block.
-    Uses a deeper sibling walk to capture nested answer blocks.
-    """
+# ---------------------------------------------------------
+# EXTRACTION MODES
+# ---------------------------------------------------------
+def extract_from_containers(soup: BeautifulSoup):
+    """Extract FAQs from accordion + faq block containers."""
     faqs = []
-    headings = soup.find_all(["h2", "h3", "dt", "strong"])
+    containers = parse_containers(soup)
+
+    for c in containers:
+        q = extract_question(c)
+        a = extract_answer(c)
+        if q and a and is_valid_faq(q, a):
+            faqs.append({"question": q, "answer": a})
+    return faqs
+
+
+def extract_from_headings(soup: BeautifulSoup):
+    """Heading-based fallback extraction."""
+    faqs = []
+    headings = soup.find_all(selectors["heading_fallbacks"])
 
     for h in headings:
-        question = clean_text(h.get_text(separator=" ", strip=True))
-        if not question:
+        q = clean_text(h.get_text(" ", strip=True))
+        if not q:
             continue
 
-        answer = _collect_answer_block(h)
-        if not answer:
+        a = deep_collect_answer(h)
+        if not a:
             continue
 
-        if is_valid_faq(question, answer):
-            faqs.append({"question": question, "answer": answer})
+        if is_valid_faq(q, a):
+            faqs.append({"question": q, "answer": a})
 
     return faqs
 
 
-def extract_from_markdown(soup: BeautifulSoup):
-    """
-    Final fallback: extract entire page as markdown (last resort).
+def extract_as_markdown(soup: BeautifulSoup):
+    """Final fallback extraction."""
+    md_text = md(str(soup))
+    md_text = re.sub(r"<[^>]+>", " ", md_text)
+    md_text = clean_text(md_text)
 
-    We cap the length at 1500 characters to avoid triggering validation
-    failures on extremely long answers and strip any residual HTML tags.
-    """
-    markdown_text = md(str(soup))
-    # Remove any residual HTML tags if markdownify left some in
-    markdown_text = re.sub(r"<[^>]+>", " ", markdown_text)
-    markdown_text = clean_text(markdown_text)
+    if len(md_text) > rules["max_fallback_answer_chars"]:
+        md_text = md_text[: rules["max_fallback_answer_chars"]]
 
-    if len(markdown_text) > 1500:
-        markdown_text = markdown_text[:1500]
-
-    return [
-        {
-            "question": "Full Page Content (fallback)",
-            "answer": markdown_text,
-        }
-    ]
+    return [{
+        "question": "Full Page Content (fallback)",
+        "answer": md_text
+    }]
 
 
 def extract_faq_pairs(html: str):
-    """Run multi-mode extraction pipeline with fallback tiers."""
+    """Main extraction pipeline."""
     soup = BeautifulSoup(html, "html.parser")
 
-    # Cleanup script/style/nav/header/footer for less noise
-    for tag in soup(["script", "style", "footer", "nav", "header"]):
-        tag.decompose()
+    # strip noisy tags
+    for tag in rules["strip_tags"]:
+        for el in soup.find_all(tag):
+            el.decompose()
 
     faqs = []
 
-    # Tier 1: Accordion extraction
-    faqs.extend(extract_from_accordion(soup))
+    # Mode 1: containers → most accurate
+    faqs.extend(extract_from_containers(soup))
 
-    # Tier 2: FAQ block extraction (.faq, .faq-item, etc.)
-    more_faqs = extract_from_faq_blocks(soup)
-    faqs.extend(more_faqs)
-
-    # Tier 3: Heading-based extraction
+    # Mode 2: heading fallback
     if not faqs:
-        faqs = extract_from_heading_pairs(soup)
+        faqs.extend(extract_from_headings(soup))
 
-    # Tier 4: Markdown fallback (only if we still have nothing)
+    # Mode 3: last-resort markdown fallback
     if not faqs:
-        faqs = extract_from_markdown(soup)
+        faqs.extend(extract_as_markdown(soup))
 
     # Deduplicate
     uniq = []
@@ -255,56 +221,46 @@ def extract_faq_pairs(html: str):
     for f in faqs:
         key = (f["question"], f["answer"])
         if key not in seen:
-            seen.add(key)
             uniq.append(f)
+            seen.add(key)
 
     return uniq
 
 
 # ---------------------------------------------------------
-# SCRAPER ENGINE
+# PAGE INTERACTION (ACCORDION EXPANSION)
 # ---------------------------------------------------------
-def _expand_interactive_elements(page):
-    """
-    Best-effort expansion of accordions / FAQ items before scraping HTML.
-
-    We only use generic selectors we already rely on in the visual tester:
-        button, .accordion-title, .faq-question, .question
-    """
+def expand_interactive(page):
+    """Click accordion triggers + scroll to load lazy content."""
     try:
-        page.evaluate(
-            """
-            () => {
-                const selectors = ['button', '.accordion-title', '.faq-question', '.question'];
-                selectors.forEach(sel => {
-                    document.querySelectorAll(sel).forEach(el => {
-                        try {
-                            el.click();
-                        } catch (e) {
-                            // ignore click failures
-                        }
-                    });
-                });
+        click_js = f"""
+        () => {{
+            const sels = {interactive["click_selectors"]};
+            sels.forEach(sel => {{
+                document.querySelectorAll(sel).forEach(el => {{
+                    try {{ el.click(); }} catch {{ }}
+                }});
+            }});
+        }}
+        """
+        page.evaluate(click_js)
 
-                // Scroll through the page to trigger lazy-loaded content
-                let totalHeight = 0;
-                const distance = 400;
-                const timer = setInterval(() => {
-                    const scrollHeight = document.body.scrollHeight;
-                    window.scrollBy(0, distance);
-                    totalHeight += distance;
-                    if (totalHeight >= scrollHeight) {
-                        clearInterval(timer);
-                    }
-                }, 200);
-            }
-            """
-        )
+        # Scroll to trigger lazy-loading
+        distance = interactive["scroll_distance"]
+        steps = interactive["scroll_steps"]
+        delay = interactive["scroll_delay_ms"]
+
+        for _ in range(steps):
+            page.evaluate(f"window.scrollBy(0, {distance});")
+            page.wait_for_timeout(delay)
+
     except Exception:
-        # Expansion is best-effort; failures should not break scraping
         pass
 
 
+# ---------------------------------------------------------
+# MASTER SCRAPER
+# ---------------------------------------------------------
 def scrape_rbc_faqs():
     logging.info("Starting RBC FAQ scraping...")
 
@@ -312,42 +268,37 @@ def scrape_rbc_faqs():
         urls = [u.strip() for u in f if u.strip()]
 
     faq_data = []
-    pdf_links = []
+    skipped_pdfs = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
         page = browser.new_page()
 
         for url in tqdm(urls, desc="Scraping RBC FAQ pages"):
             if url.endswith(".pdf"):
+                skipped_pdfs.append(url)
                 logging.warning(f"Skipped PDF: {url}")
-                pdf_links.append(url)
                 continue
 
             try:
-                # Load with extended wait for JS-heavy pages
                 page.goto(url, timeout=70000)
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_load_state("networkidle")
                 page.wait_for_timeout(1500)
 
-                # Try to expand accordions / FAQ sections
-                _expand_interactive_elements(page)
-                page.wait_for_timeout(1500)
+                expand_interactive(page)
+                page.wait_for_timeout(1200)
 
                 html = page.content()
                 extracted = extract_faq_pairs(html)
 
-                # Annotate
                 now_iso = datetime.now().isoformat()
                 for item in extracted:
-                    item.update(
-                        {
-                            "url": url,
-                            "source": "RBC",
-                            "retrieved_at": now_iso,
-                        }
-                    )
+                    item.update({
+                        "url": url,
+                        "source": "RBC",
+                        "retrieved_at": now_iso
+                    })
 
                 faq_data.extend(extracted)
                 logging.info(f"Scraped {len(extracted)} items from {url}")
@@ -359,18 +310,18 @@ def scrape_rbc_faqs():
 
         browser.close()
 
-    # Save data
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_path = DATA_RAW / f"{timestamp}_rbc_raw.json"
-    processed_path = DATA_PROCESSED / "rbc_faqs.parquet"
+    # Save raw + processed
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_path = DATA_RAW / f"{ts}_rbc_raw.json"
+    proc_path = DATA_PROCESSED / "rbc_faqs.parquet"
 
     with open(raw_path, "w", encoding="utf-8") as f:
         json.dump(faq_data, f, ensure_ascii=False, indent=2)
 
     df = pd.DataFrame(faq_data).drop_duplicates(subset=["question", "answer"])
-    df.to_parquet(processed_path, index=False)
+    df.to_parquet(proc_path, index=False)
 
-    logging.info(f"Saved {len(df)} cleaned FAQs to {processed_path}")
+    logging.info(f"Saved {len(df)} final FAQ entries → {proc_path}")
     print(f"Scraping complete: {len(df)} FAQ entries saved.")
 
 
