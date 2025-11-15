@@ -1,56 +1,101 @@
 {
-  "accordion_selectors": [
-    ".accordion-panel",
-    ".accordion-item",
-    ".accordion",
-    ".accordion-content",
-    ".accordionContainer",
-    ".accordionHeadline",
-    ".collapse-item"
-  ],
+  "selectors": {
+    "accordion_containers": [
+      ".accordion-panel",
+      ".accordion-item",
+      ".accordion",
+      ".accordion-wrapper",
+      ".accordion-content",
+      ".accordion-body",
+      ".accordion-section",
+      ".accordion-question",
+      ".accordion-answer",
+      ".rbc-accordion",
+      ".rbc-accordion-item"
+    ],
 
-  "faq_item_selectors": [
-    ".faq-item",
-    ".faq",
-    ".faq-block",
-    ".faq-container",
-    ".panel",
-    ".panel-body"
-  ],
+    "faq_blocks": [
+      ".faq",
+      ".faq-item",
+      ".faq-container",
+      ".faq-block",
+      ".collapse-item",
+      ".rbc-faq",
+      ".rbc-faq-item",
+      ".rbc-faq-block",
+      ".rbc-help-faq"
+    ],
 
-  "question_selectors": [
-    "button",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "strong",
-    ".question",
-    ".faq-question",
-    ".accordion-title",
-    ".accordionHeadline"
-  ],
+    "question_elements": [
+      "button",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "strong",
+      ".accordion-title",
+      ".question",
+      ".faq-question",
+      ".rbc-faq-question"
+    ],
 
-  "answer_selectors": [
-    "p",
-    "div",
-    ".answer",
-    ".faq-answer",
-    ".accordionText",
-    ".accordion-content",
-    ".panel-body"
-  ],
+    "answer_elements": [
+      "p",
+      "div",
+      "section",
+      ".accordion-body",
+      ".accordion-content",
+      ".panel-body",
+      ".collapse-body",
+      ".answer",
+      ".faq-answer",
+      ".rbc-faq-answer",
+      ".rbc-answer-block"
+    ],
 
-  "noise_patterns": [
-    "privacy",
-    "terms",
-    "legal",
-    "copyright",
-    "cookies",
-    "all rights reserved",
-    "follow us",
-    "contact us"
-  ],
+    "heading_fallbacks": [
+      "h2",
+      "h3",
+      "strong",
+      "dt"
+    ]
+  },
 
-  "markdown_fallback_min_length": 1500
+  "extraction": {
+    "strip_tags": [
+      "script",
+      "style",
+      "footer",
+      "nav",
+      "header",
+      "img",
+      "svg"
+    ],
+    "noise_patterns": [
+      "cookie",
+      "privacy",
+      "footer",
+      "terms",
+      "all rights reserved",
+      "javascript",
+      "legal disclaimer"
+    ],
+    "min_question_length": 8,
+    "min_answer_length": 15,
+    "max_fallback_answer_chars": 1500
+  },
+
+  "interactive_expansion": {
+    "click_selectors": [
+      "button",
+      ".accordion-title",
+      ".faq-question",
+      ".question",
+      ".toggle",
+      ".rbc-accordion-trigger"
+    ],
+    "scroll_steps": 6,
+    "scroll_distance": 600,
+    "scroll_delay_ms": 200
+  }
 }
