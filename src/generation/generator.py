@@ -3,16 +3,17 @@ generator.py
 -------------------------------------------------------
 Hybrid-grounded RAG generator for Phi-3.5-Mini-Instruct.
 
-Key Features:
-    • Hybrid grounding = keyword overlap + soft substring
-    • Zero hallucinations (safety-first)
-    • Allows legitimate paraphrasing
-    • Robust answer extraction
-    • Deterministic decoding
+Upgrades in this corrected version:
+    • Removes system / instruction leakage
+    • Cuts everything before/after the "Answer:" section
+    • Prevents Phi from echoing the entire prompt
+    • Stronger regex-style extraction logic
+    • Still deterministic, still hallucination-safe
 """
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
 
 # ---------------------------------------------------------
 # Model Configuration
@@ -33,17 +34,20 @@ model = AutoModelForCausalLM.from_pretrained(
 
 
 # ---------------------------------------------------------
-# RAG Prompt Builder — tailored for Phi chat format
+# Prompt Builder for Phi (no chat template)
 # ---------------------------------------------------------
-def build_prompt(question: str, chunks: list[str]):
+def build_prompt(question: str, chunks: list[str]) -> str:
+    """
+    Phi-3.5 is sensitive to long instructions.
+    Using a minimal, tightly controlled prompt prevents leakage.
+    """
+
     context_text = "\n\n".join(chunks) if chunks else "No context available."
 
-    # Phi uses natural chat format, not Qwen chat template tokens.
     prompt = (
-        "You are an RBC assistant.\n"
-        "Answer ONLY using the provided context.\n"
+        "You are an assistant that answers ONLY using the provided context.\n"
         "If the answer is not in the context, reply with exactly: I don't know.\n"
-        "Do NOT add outside facts or assumptions.\n\n"
+        "Do NOT add outside facts.\n\n"
         f"Context:\n{context_text}\n\n"
         f"Question: {question}\n"
         "Answer:"
@@ -53,61 +57,70 @@ def build_prompt(question: str, chunks: list[str]):
 
 
 # ---------------------------------------------------------
-# Clean model output
+# Robust Output Extraction (Corrected)
 # ---------------------------------------------------------
 def extract_answer(full_output: str) -> str:
+    """
+    Strict cleaning:
+        1. Remove everything before the final 'Answer:'
+        2. Drop system/echoed instructions
+        3. Prevent leakage of prompt content
+    """
+
     text = full_output.strip()
 
-    # Remove repeated instructions
+    # 1 — Keep everything AFTER the last occurrence of "Answer:"
+    if "Answer:" in text:
+        text = text.split("Answer:")[-1].strip()
+
+    # 2 — Remove common instruction echoes
     bad_phrases = [
-        "Answer only using the context.",
-        "Give the answer using only the context.",
-        "Use only the context.",
-        "Based on the context",
-        "Answer:"
+        "You are an assistant",
+        "ONLY using the provided context",
+        "Do NOT add outside facts",
+        "Context:",
+        "Question:",
+        "Answer only using the context",
+        "Use only the context",
+        "Give the answer using only the context",
     ]
     for p in bad_phrases:
         text = text.replace(p, "").strip()
 
+    # 3 — Remove any leftover prompt fragments
+    for word in ["Context", "Question", "system", "assistant"]:
+        if word + ":" in text:
+            text = text.split(word + ":")[0].strip()
+
+    # Final cleanup
     return text.strip()
 
 
 # ---------------------------------------------------------
-# Hybrid Grounding Logic
+# Hybrid Grounding (hallucination guard)
 # ---------------------------------------------------------
 def hybrid_grounding(answer: str, chunks: list[str]) -> bool:
-    """
-    Combination of:
-        1. Keyword overlap (≥ 1 meaningful token)
-        2. Soft substring similarity
-    """
-
     if not answer or answer.lower() == "i don't know":
         return True
 
     ans_tokens = set(answer.lower().split())
     ctx_tokens = set(" ".join(chunks).lower().split())
 
-    # Stopwords
     stopwords = {
         "the", "is", "a", "to", "of", "and", "in",
         "for", "on", "by", "you", "your", "or"
     }
     ans_tokens = ans_tokens - stopwords
 
-    # --- Rule 1: Keyword overlap ---
+    # Rule 1 — token overlap
     if len(ans_tokens.intersection(ctx_tokens)) >= 1:
         return True
 
-    # --- Rule 2: Soft substring match ---
+    # Rule 2 — soft substring match
     for ch in chunks:
         ch_low = ch.lower()
-
-        # If the answer contains the first 30–60 chars of the chunk
         if ch_low[:60] in answer.lower():
             return True
-
-        # If a big portion overlaps
         if len(ch_low) > 40 and ch_low[:50] in answer.lower():
             return True
 
@@ -115,7 +128,7 @@ def hybrid_grounding(answer: str, chunks: list[str]) -> bool:
 
 
 # ---------------------------------------------------------
-# Main generation function
+# Main Generator
 # ---------------------------------------------------------
 def generate_answer(question: str, chunks: list[str]) -> str:
     if not chunks:
@@ -123,10 +136,7 @@ def generate_answer(question: str, chunks: list[str]) -> str:
 
     prompt = build_prompt(question, chunks)
 
-    encoded = tokenizer(
-        prompt,
-        return_tensors="pt"
-    ).to(model.device)
+    encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
         output_ids = model.generate(
@@ -140,10 +150,9 @@ def generate_answer(question: str, chunks: list[str]) -> str:
 
     full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
-    # Extract only the answer portion
     answer = extract_answer(full_output)
 
-    # Hybrid grounding (hallucination filter)
+    # Hallucination filter
     if not hybrid_grounding(answer, chunks):
         return "I don't know."
 
@@ -151,7 +160,7 @@ def generate_answer(question: str, chunks: list[str]) -> str:
 
 
 # ---------------------------------------------------------
-# Manual Test
+# Manual Micro-Test
 # ---------------------------------------------------------
 if __name__ == "__main__":
     sample_chunks = [
