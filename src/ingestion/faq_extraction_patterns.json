@@ -1,0 +1,56 @@
+{
+  "accordion_selectors": [
+    ".accordion-panel",
+    ".accordion-item",
+    ".accordion",
+    ".accordion-content",
+    ".accordionContainer",
+    ".accordionHeadline",
+    ".collapse-item"
+  ],
+
+  "faq_item_selectors": [
+    ".faq-item",
+    ".faq",
+    ".faq-block",
+    ".faq-container",
+    ".panel",
+    ".panel-body"
+  ],
+
+  "question_selectors": [
+    "button",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "strong",
+    ".question",
+    ".faq-question",
+    ".accordion-title",
+    ".accordionHeadline"
+  ],
+
+  "answer_selectors": [
+    "p",
+    "div",
+    ".answer",
+    ".faq-answer",
+    ".accordionText",
+    ".accordion-content",
+    ".panel-body"
+  ],
+
+  "noise_patterns": [
+    "privacy",
+    "terms",
+    "legal",
+    "copyright",
+    "cookies",
+    "all rights reserved",
+    "follow us",
+    "contact us"
+  ],
+
+  "markdown_fallback_min_length": 1500
+}
