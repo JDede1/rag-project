@@ -4,8 +4,8 @@ chat_ui.py — Premium Fintech UI for RAG System
 Safe, non-RBC-branded. Modern banking aesthetics.
 Works with:
     - FastAPI backend (ngrok)
-    - Streamlit Frontend (Cloudflare)
-    - Phi-3.5-Mini + Hybrid-grounded generator
+    - Streamlit frontend (Cloudflare)
+    - Phi-3.5-Mini-Instruct + Hybrid-grounded generator
 """
 
 import streamlit as st
@@ -19,10 +19,17 @@ import time
 # ============================================================
 COLAB_URL_FILE = "/content/rag-project/rag_llm_url.txt"
 
-if os.path.exists(COLAB_URL_FILE):
-    BACKEND_URL = open(COLAB_URL_FILE).read().strip()
-else:
-    BACKEND_URL = st.secrets.get("RAG_BACKEND_URL")
+def load_backend_url():
+    if os.path.exists(COLAB_URL_FILE):
+        try:
+            url = open(COLAB_URL_FILE).read().strip()
+            if url:
+                return url
+        except:
+            pass
+    return st.secrets.get("RAG_BACKEND_URL")
+
+BACKEND_URL = load_backend_url()
 
 if not BACKEND_URL:
     st.error("Backend URL missing. Cannot start UI.")
@@ -59,7 +66,7 @@ body {
     color: white;
 }
 
-/* Chat bubbles (Glassmorphism) */
+/* Chat bubbles */
 .stChatMessage {
     border-radius: 14px !important;
     padding: 14px !important;
@@ -93,7 +100,6 @@ body {
     background: linear-gradient(90deg, #1E90FF, #87CEFA);
 }
 
-/* Typing loader */
 .typing {
     font-style: italic;
     opacity: 0.7;
@@ -117,7 +123,7 @@ st.markdown("""
 
 
 # ============================================================
-# Session State
+# Session State Initialization
 # ============================================================
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
@@ -125,8 +131,8 @@ if "messages" not in st.session_state:
 if "retrieved_docs" not in st.session_state:
     st.session_state["retrieved_docs"] = []
 
-if "loading" not in st.session_state:
-    st.session_state["loading"] = False
+if "waiting" not in st.session_state:
+    st.session_state["waiting"] = False
 
 
 # ============================================================
@@ -138,21 +144,25 @@ for role, text in st.session_state["messages"]:
 
 
 # ============================================================
-# User Input
+# Handle User Input
 # ============================================================
 user_prompt = st.chat_input("Ask any banking-related question...")
 
-if user_prompt:
+if user_prompt and not st.session_state["waiting"]:
+    # Append user message
     st.session_state["messages"].append(("user", user_prompt))
 
     with st.chat_message("user"):
         st.markdown(user_prompt)
 
-    # Backend call
-    st.session_state["loading"] = True
-    with st.chat_message("assistant"):
-        st.markdown("<span class='typing'>Thinking...</span>", unsafe_allow_html=True)
+    # Placeholder “thinking” message
+    placeholder = st.chat_message("assistant")
+    placeholder.markdown("<span class='typing'>Thinking...</span>", unsafe_allow_html=True)
 
+    # Mark as waiting to avoid overlap / rerun recursion
+    st.session_state["waiting"] = True
+
+    # Call backend
     try:
         response = requests.get(
             f"{BACKEND_URL}/ask",
@@ -168,12 +178,14 @@ if user_prompt:
         answer = f"Backend connection error: {e}"
         retrieved_docs = []
 
-    # Remove loader, replace with final answer
+    # Replace placeholder with final answer
+    placeholder.markdown(answer)
+
     st.session_state["messages"].append(("assistant", answer))
     st.session_state["retrieved_docs"] = retrieved_docs
-    st.session_state["loading"] = False
 
-    st.rerun()
+    # Clear waiting flag
+    st.session_state["waiting"] = False
 
 
 # ============================================================
@@ -195,9 +207,8 @@ if retrieved:
                 unsafe_allow_html=True
             )
 
-            # Score bar
             score = float(doc.get("score", 0))
-            bar_width = int(score * 100)
+            bar_width = max(5, int(score * 100))
 
             st.markdown(
                 f"<div class='score-bar' style='width:{bar_width}%;'></div>",
@@ -210,13 +221,12 @@ if retrieved:
                 st.markdown(f"[Source Link]({doc['url']})")
 
             st.markdown("</div>", unsafe_allow_html=True)
-
 else:
     st.sidebar.info("Ask a question to view retrieved chunks.")
 
 
 # ============================================================
-# Optional Developer Panel
+# Debug Panel (optional)
 # ============================================================
 with st.expander("🔍 Show Raw Retrieval Metadata (Debug Mode)"):
     st.write(st.session_state["retrieved_docs"])
