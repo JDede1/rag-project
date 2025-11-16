@@ -21,9 +21,8 @@ html, body {
 
 
 /* ============================================================
-   HERO / TITLE (Streamlit loads this through chat_ui.py)
+   HERO / TITLE
    ============================================================ */
-
 .hero {
     background: linear-gradient(135deg, #0A1A2F, #1C3453);
     border-radius: 18px;
@@ -34,9 +33,8 @@ html, body {
 
 
 /* ============================================================
-   CHAT BUBBLES (reinforces Streamlit inline CSS)
+   CHAT BUBBLES
    ============================================================ */
-
 .stChatMessage {
     border-radius: 14px !important;
     padding: 14px !important;
@@ -59,7 +57,6 @@ html, body {
 /* ============================================================
    SIDEBAR & CHUNK CARDS
    ============================================================ */
-
 .sidebar-card {
     padding: 14px;
     background: rgba(255,255,255,0.10);
@@ -84,26 +81,28 @@ html, body {
 
 
 /* ============================================================
-   INPUTS — Glass inspired
+   GLOBAL INPUT STYLING
    ============================================================ */
-
-input, textarea, .stTextInput input {
+input,
+textarea,
+.stTextInput input {
     border-radius: 10px !important;
     background: rgba(255, 255, 255, 0.20) !important;
     border: 1px solid rgba(255, 255, 255, 0.28) !important;
     color: #eaf3fc !important;
 }
 
-input::placeholder, textarea::placeholder {
+input::placeholder,
+textarea::placeholder {
     color: #c3d0e0 !important;
 }
 
 
 /* ============================================================
-   BUTTONS — Soft gradient
+   BUTTONS
    ============================================================ */
-
-button, .stButton>button {
+button,
+.stButton>button {
     background: linear-gradient(135deg, #72d5ff, #b6ecff);
     color: #0a1a2f !important;
     border-radius: 12px !important;
@@ -113,7 +112,8 @@ button, .stButton>button {
     transition: 0.2s ease;
 }
 
-button:hover, .stButton>button:hover {
+button:hover,
+.stButton>button:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 15px rgba(0, 140, 255, 0.45);
 }
@@ -122,7 +122,6 @@ button:hover, .stButton>button:hover {
 /* ============================================================
    LOADING TEXT
    ============================================================ */
-
 .typing {
     font-style: italic;
     color: #cfd9e6;
@@ -131,11 +130,9 @@ button:hover, .stButton>button:hover {
 
 
 /* ============================================================
-   UTILITY
+   UTILITY CLASSES
    ============================================================ */
-
 .center { text-align: center; }
-
 .mt-2 { margin-top: 12px; }
 .mt-3 { margin-top: 18px; }
 .mt-4 { margin-top: 24px; }
@@ -143,3 +140,21 @@ button:hover, .stButton>button:hover {
 .mb-2 { margin-bottom: 12px; }
 .mb-3 { margin-bottom: 18px; }
 .mb-4 { margin-bottom: 24px; }
+
+
+/* ============================================================
+   FIX: Make Streamlit CHAT INPUT fully readable
+   ============================================================ */
+
+/* Force visible background + dark text for chat input */
+div[data-baseweb="input"] input {
+    background: rgba(255, 255, 255, 0.92) !important;
+    color: #0A1A2F !important;
+    font-weight: 500 !important;
+    border-radius: 10px !important;
+}
+
+/* Visible placeholder text */
+div[data-baseweb="input"] input::placeholder {
+    color: #4A5568 !important;
+}
