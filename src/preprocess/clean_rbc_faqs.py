@@ -3,17 +3,21 @@ clean_rbc_faqs.py
 -------------------------------------------------------
 Deep text cleaning for scraped RBC FAQ data.
 
-This version preserves provenance fields:
-    • url
-    • source
-    • retrieved_at
+This version preserves structural formatting:
+    - Keeps paragraph boundaries
+    - Keeps newline separation
+    - Normalizes spaces without flattening structure
 
-so downstream steps (normalize → split → chunk → embed) have full metadata.
+Also preserves provenance fields:
+    - url
+    - source
+    - retrieved_at
 """
 
 import re
 import pandas as pd
 from pathlib import Path
+
 
 # -------------------------------------------------------
 # PATH CONFIGURATION
@@ -27,25 +31,43 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_clean.parquet"
 # TEXT NORMALIZATION HELPERS
 # -------------------------------------------------------
 def normalize_whitespace(text: str) -> str:
+    """
+    Normalize excessive spaces while preserving line breaks.
+    """
     if not isinstance(text, str):
         return ""
 
     text = text.replace("\xa0", " ")     # non-breaking spaces
     text = text.replace("\u200b", "")    # zero-width spaces
-    text = re.sub(r"\s+", " ", text)
+
+    # Normalize repeated spaces but DO NOT collapse newlines
+    text = re.sub(r"[ \t]+", " ", text)
+
+    # Replace 3+ consecutive newlines with exactly 2 (paragraph boundary)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Strip trailing spaces on each line
+    lines = [line.rstrip() for line in text.split("\n")]
+    text = "\n".join(lines)
+
     return text.strip()
 
 
 def remove_bullet_artifacts(text: str) -> str:
-    text = re.sub(r"[•▪●]", "-", text)   # standardize bullets
-    return text
+    """
+    Replace unusual bullets with standard dash but preserve line structure.
+    """
+    return re.sub(r"[•▪●]", "-", text)
 
 
 def clean_common_html_leftovers(text: str) -> str:
+    """
+    Remove common scraper artifacts without damaging content.
+    """
     patterns = [
-        r"\[.*?\]\(.*?\)",        # markdown links
-        r"Back to top",           # navigation fragments
-        r"^\s*#\s*",              # markdown headers (#)
+        r"\[.*?\]\(.*?\)",     # markdown links
+        r"Back to top",
+        r"^\s*#\s*",           # markdown headers
     ]
     for p in patterns:
         text = re.sub(p, " ", text, flags=re.IGNORECASE)
@@ -53,13 +75,15 @@ def clean_common_html_leftovers(text: str) -> str:
 
 
 def remove_boilerplate(text: str) -> str:
+    """
+    Remove navigation/footer boilerplate that should never appear in answers.
+    """
     boilerplate_patterns = [
         r"Royal Bank of Canada",
         r"©.*?RBC",
-        r"Use our mobile app",
         r"Book an appointment",
         r"Find a branch",
-        r"Contact us",
+        r"Use our mobile app",
         r"You may also like",
         r"Other ways to bank",
         r"Legal Disclaimer",
@@ -76,14 +100,17 @@ def remove_boilerplate(text: str) -> str:
 
 
 def deep_clean(text: str) -> str:
+    """
+    Apply layered cleaning without destroying structure.
+    """
     if not isinstance(text, str):
         return ""
 
-    text = normalize_whitespace(text)
     text = remove_bullet_artifacts(text)
     text = clean_common_html_leftovers(text)
     text = remove_boilerplate(text)
     text = normalize_whitespace(text)
+
     return text
 
 
@@ -119,34 +146,21 @@ def clean_rbc_faqs():
     print("Loading dataset...")
     df = pd.read_parquet(INPUT_PATH)
     print(f"Loaded {len(df)} rows")
-    
-    # ---------------------------------------------------
-    # Step 1: Ensure provenance columns are preserved
-    # ---------------------------------------------------
-    preserved_cols = []
-    for col in ["url", "source", "retrieved_at"]:
-        if col in df.columns:
-            preserved_cols.append(col)
 
-    # ---------------------------------------------------
-    # Step 2: Clean question and answer
-    # ---------------------------------------------------
+    # Preserve provenance columns if present
+    preserved_cols = [col for col in ["url", "source", "retrieved_at"] if col in df.columns]
+
+    # Clean Q/A fields independently
     df["question"] = df["question"].apply(deep_clean)
     df["answer"] = df["answer"].apply(deep_clean)
 
-    # ---------------------------------------------------
-    # Step 3: Validation filtering
-    # ---------------------------------------------------
+    # Drop invalid rows
     df = df[df.apply(lambda x: is_valid_faq(x["question"], x["answer"]), axis=1)]
 
-    # ---------------------------------------------------
-    # Step 4: Remove duplicates
-    # ---------------------------------------------------
+    # Remove exact duplicates
     df.drop_duplicates(subset=["question", "answer"], inplace=True)
 
-    # ---------------------------------------------------
-    # Step 5: Keep only necessary + provenance columns
-    # ---------------------------------------------------
+    # Reorder to final schema
     final_cols = ["question", "answer"] + preserved_cols
     df = df[final_cols]
 
