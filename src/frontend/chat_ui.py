@@ -13,7 +13,6 @@ import requests
 import os
 import time
 
-
 # ============================================================
 # Resolve Backend URL
 # ============================================================
@@ -47,7 +46,24 @@ st.set_page_config(
 
 
 # ============================================================
-# Custom CSS (Glass / Fintech Aesthetic)
+# Optional External CSS Loader (Safe, Non-breaking)
+# ============================================================
+CSS_PATH = "src/frontend/static/style.css"
+
+def load_css(path):
+    """Load optional external CSS. If missing, UI continues normally."""
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+        except Exception:
+            pass  # Silent fail ensures UI never breaks
+
+load_css(CSS_PATH)
+
+
+# ============================================================
+# Inline Custom CSS (Glass / Fintech Aesthetic)
 # ============================================================
 st.markdown("""
 <style>
@@ -159,7 +175,7 @@ if user_prompt and not st.session_state["waiting"]:
     placeholder = st.chat_message("assistant")
     placeholder.markdown("<span class='typing'>Thinking...</span>", unsafe_allow_html=True)
 
-    # Mark as waiting to avoid overlap / rerun recursion
+    # Block multiple simultaneous requests
     st.session_state["waiting"] = True
 
     # Call backend
@@ -181,10 +197,9 @@ if user_prompt and not st.session_state["waiting"]:
     # Replace placeholder with final answer
     placeholder.markdown(answer)
 
+    # Update state
     st.session_state["messages"].append(("assistant", answer))
     st.session_state["retrieved_docs"] = retrieved_docs
-
-    # Clear waiting flag
     st.session_state["waiting"] = False
 
 
