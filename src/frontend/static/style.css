@@ -1,65 +1,214 @@
-body {
-  font-family: "Segoe UI", Roboto, sans-serif;
-  background: #f2f6fa;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
+/* ============================================================
+   GLOBAL FINTECH STYLING
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
 
-.chat-container {
-  background: white;
-  padding: 2rem 2.5rem;
-  border-radius: 1rem;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-  width: 500px;
-  text-align: center;
+html, body {
+    font-family: "Inter", "Segoe UI", sans-serif;
+    color: #e6eef7;
+    background: linear-gradient(145deg, #0a192f, #0f2944, #15395b, #1a4c75);
+    background-size: 200% 200%;
+    animation: bgMove 16s ease infinite;
+    min-height: 100vh;
+}
+
+/* Slow gradient animation */
+@keyframes bgMove {
+    0% { background-position: left top; }
+    50% { background-position: right bottom; }
+    100% { background-position: left top; }
+}
+
+
+/* ============================================================
+   GLASS CARD (Reusable Container)
+   ============================================================ */
+
+.glass-card {
+    width: 92%;
+    max-width: 780px;
+    padding: 40px;
+    margin: 40px auto;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 8px 35px rgba(0, 0, 0, 0.35);
+}
+
+
+/* ============================================================
+   HEADINGS
+   ============================================================ */
+
+h1, h2, h3 {
+    font-weight: 700;
+    letter-spacing: -0.3px;
 }
 
 h1 {
-  color: #0033a0;
-  margin-bottom: 1.5rem;
+    font-size: 34px;
+    background: linear-gradient(90deg, #72d5ff, #c6eaff, #ffffff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
-form {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
+h2 {
+    font-size: 26px;
+    margin-bottom: 10px;
 }
 
-input[type="text"] {
-  flex: 1;
-  padding: 0.7rem;
-  border: 1px solid #ccc;
-  border-radius: 0.5rem;
-  font-size: 1rem;
+h3 {
+    font-size: 22px;
+    margin-bottom: 10px;
+}
+
+
+/* ============================================================
+   PARAGRAPHS & TEXT
+   ============================================================ */
+
+p {
+    font-size: 18px;
+    opacity: 0.85;
+    line-height: 1.6;
+    margin-bottom: 18px;
+}
+
+.subtitle {
+    font-size: 20px;
+    opacity: 0.9;
+    margin-bottom: 20px;
+}
+
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+.cta-btn, .primary-btn {
+    display: inline-block;
+    padding: 15px 32px;
+    border-radius: 50px;
+    font-size: 18px;
+    font-weight: 600;
+    text-decoration: none;
+    color: #0a1a2f;
+    background: linear-gradient(135deg, #a8ebff, #6cc9ff);
+    box-shadow: 0 4px 15px rgba(0, 140, 255, 0.4);
+    transition: 0.2s ease;
+}
+
+.cta-btn:hover, .primary-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0, 140, 255, 0.55);
+}
+
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+
+input[type="text"], input[type="search"], textarea {
+    width: 100%;
+    padding: 14px 18px;
+    margin-bottom: 15px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.12);
+    color: #e6eef7;
+    font-size: 16px;
+    outline: none;
+    backdrop-filter: blur(8px);
+}
+
+input::placeholder, textarea::placeholder {
+    color: #c8d4e2;
 }
 
 button {
-  background-color: #0033a0;
-  color: white;
-  border: none;
-  padding: 0.7rem 1.2rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  font-weight: bold;
+    background: linear-gradient(135deg, #73ccff, #a6e8ff);
+    color: #0a1a2f;
+    padding: 14px 28px;
+    font-size: 17px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.2s ease;
 }
 
 button:hover {
-  background-color: #0055cc;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 140, 255, 0.45);
 }
 
-.loading {
-  color: #ff9900;
-  margin-top: 1rem;
-  font-style: italic;
-}
+
+/* ============================================================
+   RESPONSE BOX
+   ============================================================ */
 
 .response-box {
-  background-color: #e9f0ff;
-  border-left: 4px solid #0033a0;
-  padding: 1rem;
-  margin-top: 1rem;
-  border-radius: 0.5rem;
-  text-align: left;
+    margin-top: 25px;
+    padding: 20px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.20);
+    color: #eaf3fc;
+}
+
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+.footer {
+    font-size: 14px;
+    color: #cfd9e6;
+    opacity: 0.6;
+    text-align: center;
+    margin-top: 30px;
+}
+
+
+/* ============================================================
+   UTILITY CLASSES
+   ============================================================ */
+
+.center {
+    text-align: center;
+}
+
+.mt-2 { margin-top: 12px; }
+.mt-3 { margin-top: 18px; }
+.mt-4 { margin-top: 24px; }
+
+.mb-2 { margin-bottom: 12px; }
+.mb-3 { margin-bottom: 18px; }
+.mb-4 { margin-bottom: 24px; }
+
+
+/* ============================================================
+   LOADING ANIMATION (For future use)
+   ============================================================ */
+
+.loading-dots::after {
+    content: " ...";
+    animation: dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes dots {
+    0%, 20% { content: ""; }
+    40% { content: "."; }
+    60% { content: ".."; }
+    80%, 100% { content: "..."; }
 }
