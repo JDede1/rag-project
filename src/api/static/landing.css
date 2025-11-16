@@ -1,0 +1,109 @@
+/* ----------------------------------------------------------
+   Fintech Glassmorphism Landing Page
+----------------------------------------------------------- */
+
+body {
+    margin: 0;
+    padding: 0;
+    background: linear-gradient(135deg, #0A1A2F, #1C334B, #162B3F);
+    background-size: cover;
+    font-family: "Inter", sans-serif;
+    color: #f5f6fa;
+}
+
+/* Hero Banner */
+.hero {
+    text-align: center;
+    padding: 48px 20px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.hero h1 {
+    font-size: 42px;
+    margin-bottom: 12px;
+    letter-spacing: -1px;
+}
+
+.hero p {
+    opacity: 0.9;
+    font-size: 18px;
+}
+
+/* Content Container */
+.container {
+    max-width: 950px;
+    margin: 40px auto;
+    padding: 20px;
+}
+
+/* Glass Cards */
+.glass-card {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 24px 28px;
+    margin-bottom: 28px;
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(18px);
+    transition: 0.3s ease;
+}
+
+.glass-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(255,255,255,0.25);
+}
+
+/* Buttons */
+.btn {
+    display: block;
+    width: fit-content;
+    padding: 12px 20px;
+    margin-top: 12px;
+
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+
+    color: #0A1A2F;
+    background: #ffffff;
+    border: 1px solid rgba(255,255,255,0.5);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+
+    transition: all 0.25s ease;
+}
+
+.btn:hover {
+    background: #dfe9ff;
+}
+
+/* Secondary button (blue) */
+.btn.secondary {
+    background: #e5f1ff;
+    border-color: #c2d8ff;
+}
+
+.btn.secondary:hover {
+    background: #d1e3ff;
+}
+
+/* Tertiary button (dark) */
+.btn.tertiary {
+    background: #0f2239;
+    color: #ffffff;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+.btn.tertiary:hover {
+    background: #153258;
+}
+
+/* Footer */
+.footer {
+    text-align: center;
+    padding: 24px;
+    opacity: 0.8;
+    margin-top: 40px;
+    font-size: 14px;
+}
