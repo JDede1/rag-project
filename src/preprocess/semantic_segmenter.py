@@ -1,22 +1,19 @@
 """
 semantic_segmenter.py
 -------------------------------------------------------
-Reusable segmentation utilities for RAG preprocessing.
+Segmentation utilities for RAG preprocessing.
 
-Goal:
-    Turn an answer string into a small number of coherent,
-    retrieval-friendly chunks.
+Purpose:
+    Convert an answer string into coherent, retrieval-friendly chunks.
 
 Design:
-    1. Split answer into sentences.
-    2. Group sentences into segments such that:
-         - Each segment length is between min_chars and max_chars.
-         - Step-like lines (1., 2., -, etc.) can start new segments
-           when appropriate.
-    3. Return a list of chunk strings, ready for embedding.
+    1. Split answer into sentences using punctuation and paragraph cues.
+    2. Group sentences into segments:
+         - Chunk size between min_chars and max_chars.
+         - Step-like lines (e.g., "1.", "-", "*", "Step 1") trigger new segments.
+    3. Return final chunk list ready for embedding.
 
-Intended use:
-    from src.preprocess.semantic_segmenter import segment_answer_into_chunks
+This module expects upstream steps to preserve newline structure.
 """
 
 from __future__ import annotations
@@ -25,48 +22,75 @@ import re
 from typing import List
 
 
-# Basic sentence splitter pattern:
-# - Splits on punctuation followed by space and capital letter.
-SENTENCE_REGEX = r"(?<=[.!?])\s+(?=[A-Z])"
+# -------------------------------------------------------
+# PARAGRAPH AND SENTENCE SPLITTING
+# -------------------------------------------------------
+
+def collapse_spaces(text: str) -> str:
+    """
+    Normalize spaces inside lines but preserve newline structure.
+    """
+    lines = [re.sub(r"[ \t]+", " ", ln).rstrip() for ln in text.split("\n")]
+    return "\n".join(lines).strip()
 
 
 def split_into_sentences(text: str) -> List[str]:
     """
-    Split raw text into sentences using a lightweight heuristic.
+    Robust sentence splitter:
+        - Uses newline boundaries as soft separators.
+        - Splits inside paragraphs on punctuation + capital letter.
     """
     if not isinstance(text, str) or not text.strip():
         return []
 
-    parts = re.split(SENTENCE_REGEX, text.strip())
-    sentences = [p.strip() for p in parts if len(p.strip()) > 1]
+    text = collapse_spaces(text)
+
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    pattern = r"(?<=[.!?])\s+(?=[A-Z])"
+
+    sentences: List[str] = []
+
+    for para in paragraphs:
+        parts = re.split(pattern, para)
+        for p in parts:
+            p = p.strip()
+            if len(p) > 1:
+                sentences.append(p)
+
     return sentences
 
 
+# -------------------------------------------------------
+# STEP / LIST ITEM DETECTION
+# -------------------------------------------------------
+
 def is_step_line(sentence: str) -> bool:
     """
-    Detect whether a sentence looks like a step or list item, e.g.:
-
-        - "1. Call us at 1-800-769-2512."
-        - "- Go to Online Banking."
-        - "• Select your card."
-
-    This helps us avoid joining unrelated steps into a single chunk.
+    Detect step-like or list-like sentences, which often indicate
+    procedural boundaries in banking FAQs.
     """
     s = sentence.strip()
-
     if not s:
         return False
 
-    # Bullet points or numbered items
+    # Numbered or bullet items
     if re.match(r"^(\d+[\).\]]\s+|-|\*)\s*", s):
         return True
 
-    # Simple "Step 1" style markers
+    # "Step 1", "Step 2", etc.
     if s.lower().startswith("step "):
+        return True
+
+    # Bullet characters replaced during cleaning
+    if s.startswith("- "):
         return True
 
     return False
 
+
+# -------------------------------------------------------
+# SEGMENT GROUPING
+# -------------------------------------------------------
 
 def group_sentences_into_segments(
     sentences: List[str],
@@ -74,14 +98,14 @@ def group_sentences_into_segments(
     min_chars: int,
 ) -> List[str]:
     """
-    Group sentences into segments respecting the min/max character limits
-    and step boundaries.
+    Group sentences into coherent segments based on character limits
+    and structural cues.
 
     Rules:
-        - Try to keep each segment <= max_chars.
-        - Avoid segments shorter than min_chars when possible.
-        - If a new sentence is a "step line" and current buffer
-          already has enough content, start a new segment.
+        - Keep each segment <= max_chars when possible.
+        - Avoid segments < min_chars unless unavoidable.
+        - Start new segments at step-like lines if the current buffer
+          already has enough content.
     """
     if not sentences:
         return []
@@ -94,30 +118,28 @@ def group_sentences_into_segments(
         if not sent:
             continue
 
-        # If this sentence looks like a new step and buffer is already
-        # reasonably long, flush buffer to its own segment.
+        # Start new segment at a step line if buffer is established
         if is_step_line(sent) and buffer and len(buffer) >= min_chars:
             segments.append(buffer.strip())
             buffer = sent
             continue
 
-        # If buffer empty, start with this sentence
+        # Start buffer
         if not buffer:
             buffer = sent
             continue
 
-        # If adding this sentence stays within max_chars, append
+        # Append if within limit
         if len(buffer) + 1 + len(sent) <= max_chars:
             buffer += " " + sent
         else:
-            # Flush and start a new buffer
             segments.append(buffer.strip())
             buffer = sent
 
     if buffer:
         segments.append(buffer.strip())
 
-    # Second pass: ensure no tiny segments (merge forward where needed)
+    # Second pass: merge tiny segments
     final_segments: List[str] = []
     carry = ""
 
@@ -141,35 +163,43 @@ def group_sentences_into_segments(
     return final_segments
 
 
+# -------------------------------------------------------
+# MAIN ENTRY POINT
+# -------------------------------------------------------
+
 def segment_answer_into_chunks(
     answer: str,
     max_chars: int = 320,
     min_chars: int = 80,
 ) -> List[str]:
     """
-    High-level utility: given a raw answer string, return chunk strings.
+    Segment an answer into retrieval-ready chunks.
 
     Parameters
     ----------
     answer : str
-        The full answer text to segment.
+        The full answer text.
     max_chars : int
-        Maximum length of each chunk.
+        Maximum characters per chunk.
     min_chars : int
-        Minimum desired length of each chunk.
+        Minimum characters per chunk.
 
     Returns
     -------
     List[str]
-        A list of chunk strings.
+        Chunked segments ready for embedding.
     """
+    if not answer or not isinstance(answer, str):
+        return []
+
     sentences = split_into_sentences(answer)
     if not sentences:
         return []
 
-    segments = group_sentences_into_segments(
+    chunks = group_sentences_into_segments(
         sentences=sentences,
         max_chars=max_chars,
         min_chars=min_chars,
     )
-    return segments
+
+    return chunks
