@@ -3,17 +3,16 @@ normalize_faqs.py
 -------------------------------------------------------
 Normalize FAQ entries so that all question/answer pairs:
 
-    • Follow consistent structure
-    • Do not contain navigation artifacts as questions
-    • Have correctly aligned "question" and "answer" text
-    • Remove section headers that were mistakenly treated as questions
-    • Convert multi-line answers into clean paragraphs
-    • Prepare the dataset for downstream splitting and chunking
+    - Follow consistent structure
+    - Have valid questions
+    - Preserve answer structure
+    - Remove mislabeled headers or navigation elements
+    - Prepare the dataset for splitting and chunking
 
 This version preserves provenance fields:
-    • url
-    • source
-    • retrieved_at
+    - url
+    - source
+    - retrieved_at
 
 Runs AFTER clean_rbc_faqs.py but BEFORE splitting.
 """
@@ -36,29 +35,34 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_normalized.parquet"
 # -------------------------------------------------------
 def looks_like_question(text: str) -> bool:
     """
-    Determine whether a string is a valid FAQ-style question.
+    Validate whether a string is a real FAQ question.
     """
     if not isinstance(text, str):
         return False
 
     stripped = text.strip()
 
+    # Minimum length
     if len(stripped) < 8:
         return False
 
+    # Must end with question mark
     if not stripped.endswith("?"):
         return False
 
-    header_patterns = [
+    # Headers frequently mislabeled as questions
+    invalid_headers = [
         r"^About\b",
         r"^Overview\b",
         r"^Features\b",
         r"^Eligibility\b",
         r"^You may also like\b",
         r"^Other ways to bank\b",
+        r"^Legal\b",
+        r"^Privacy\b",
     ]
 
-    for p in header_patterns:
+    for p in invalid_headers:
         if re.match(p, stripped, flags=re.IGNORECASE):
             return False
 
@@ -69,40 +73,61 @@ def looks_like_question(text: str) -> bool:
 # ANSWER NORMALIZATION
 # -------------------------------------------------------
 def normalize_answer(text: str) -> str:
+    """
+    Normalize answers without destroying structure.
+    Keep paragraphs and line breaks intact.
+    """
     if not isinstance(text, str):
         return ""
 
-    text = text.replace("\r", " ").replace("\n", " ")
-    text = re.sub(r"\s+", " ", text).strip()
+    # Standardize line breaks
+    text = text.replace("\r", "\n")
 
-    # Remove markdown bullets converted to text by scraper
-    text = re.sub(r"^\s*[-•]\s*", "", text)
+    # Remove excessive spaces on lines
+    lines = [re.sub(r"[ \t]+", " ", line).rstrip() for line in text.split("\n")]
 
-    return text.strip()
+    # Remove stray markdown bullets at line start
+    cleaned_lines = [re.sub(r"^\s*[-•]\s*", "", ln) for ln in lines]
+
+    # Restore as multi-line text
+    text = "\n".join(cleaned_lines).strip()
+
+    return text
 
 
 # -------------------------------------------------------
-# STRUCTURAL NORMALIZATION
+# ROW NORMALIZATION LOGIC
 # -------------------------------------------------------
 def normalize_faq_row(question: str, answer: str):
     """
-    Normalize a single FAQ row, fixing common scraping issues.
+    Normalize a single FAQ row.
+
+    Rules:
+        - If question starts like a natural question but lacks '?',
+          add the '?'.
+        - If question is not valid, discard the row entirely
+          (do NOT merge into answer).
+        - Clean answer structure.
     """
     q = question.strip() if isinstance(question, str) else ""
     a = answer.strip() if isinstance(answer, str) else ""
 
-    # Case 1: Add missing question mark if it's obviously a question
-    if not q.endswith("?"):
-        if q.lower().startswith(("how", "what", "why", "when", "where", "who", "can", "does", "is", "are", "do")):
+    # Add missing question mark if obviously a question
+    if q and not q.endswith("?"):
+        prefixes = ("how", "what", "why", "when", "where", "who",
+                    "can", "does", "is", "are", "do", "should")
+        if q.lower().startswith(prefixes):
             q = q.rstrip(".") + "?"
 
-    # Case 2: If the question is not real, demote it to answer
+    # If still not a valid question, discard the row
     if not looks_like_question(q):
-        merged_answer = (q + " " + a).strip()
-        return "", normalize_answer(merged_answer)
+        return None, None
 
-    # Case 3: Normalize answer
+    # Clean answer while preserving structure
     normalized_a = normalize_answer(a)
+
+    if not normalized_a:
+        return None, None
 
     return q, normalized_a
 
@@ -115,11 +140,8 @@ def normalize_faqs():
     df = pd.read_parquet(INPUT_PATH)
     print(f"Loaded {len(df)} rows")
 
-    # Identify provenance columns from the cleaned dataset
-    provenance_cols = []
-    for col in ["url", "source", "retrieved_at"]:
-        if col in df.columns:
-            provenance_cols.append(col)
+    # Preserve provenance columns
+    provenance_cols = [col for col in ["url", "source", "retrieved_at"] if col in df.columns]
 
     normalized_rows = []
 
@@ -129,19 +151,26 @@ def normalize_faqs():
 
         norm_q, norm_a = normalize_faq_row(q, a)
 
-        if norm_q and norm_a:
-            entry = {
-                "question": norm_q,
-                "answer": norm_a,
-            }
+        # Skip rows with invalid questions
+        if not norm_q or not norm_a:
+            continue
 
-            # Add provenance values if present
-            for col in provenance_cols:
-                entry[col] = row[col]
+        entry = {
+            "question": norm_q,
+            "answer": norm_a,
+        }
 
-            normalized_rows.append(entry)
+        # Add provenance fields if present
+        for col in provenance_cols:
+            entry[col] = row[col]
 
-    normalized_df = pd.DataFrame(normalized_rows).drop_duplicates(subset=["question", "answer"])
+        normalized_rows.append(entry)
+
+    normalized_df = (
+        pd.DataFrame(normalized_rows)
+        .drop_duplicates(subset=["question", "answer"])
+        .reset_index(drop=True)
+    )
 
     print(f"Normalized to {len(normalized_df)} rows")
 
