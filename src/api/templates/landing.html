@@ -1,109 +1,70 @@
-/* ----------------------------------------------------------
-   Fintech Glassmorphism Landing Page
------------------------------------------------------------ */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fintech AI API</title>
+    <link rel="stylesheet" href="/static/landing.css" />
+</head>
 
-body {
-    margin: 0;
-    padding: 0;
-    background: linear-gradient(135deg, #0A1A2F, #1C334B, #162B3F);
-    background-size: cover;
-    font-family: "Inter", sans-serif;
-    color: #f5f6fa;
-}
+<body>
 
-/* Hero Banner */
-.hero {
-    text-align: center;
-    padding: 48px 20px;
-    background: rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
+    <!-- Header / Hero -->
+    <div class="hero">
+        <h1>💬 Fintech AI Assistant API</h1>
+        <p>Your Retrieval-Augmented backend is running securely in the cloud.</p>
+    </div>
 
-.hero h1 {
-    font-size: 42px;
-    margin-bottom: 12px;
-    letter-spacing: -1px;
-}
+    <!-- Container -->
+    <div class="container">
 
-.hero p {
-    opacity: 0.9;
-    font-size: 18px;
-}
+        <!-- Card 1 -->
+        <div class="glass-card">
+            <h2>🚀 API Overview</h2>
+            <p>
+                This API powers the Fintech AI Assistant using:
+                <br /><br />
+                • FAISS Semantic Search <br />
+                • Phi-3.5-Mini-Instruct (Hybrid Grounded) <br />
+                • Strict No-Hallucination RAG Pipeline <br />
+                • Cloudflare + ngrok Public Access <br />
+            </p>
+        </div>
 
-/* Content Container */
-.container {
-    max-width: 950px;
-    margin: 40px auto;
-    padding: 20px;
-}
+        <!-- Card 2 -->
+        <div class="glass-card">
+            <h2>🧪 Quick Links</h2>
 
-/* Glass Cards */
-.glass-card {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    padding: 24px 28px;
-    margin-bottom: 28px;
-    border: 1px solid rgba(255,255,255,0.12);
-    backdrop-filter: blur(18px);
-    transition: 0.3s ease;
-}
+            <a href="/health" class="btn">Health Check</a>
 
-.glass-card:hover {
-    transform: translateY(-3px);
-    border-color: rgba(255,255,255,0.25);
-}
+            <a href="/ask?query=How%20do%20I%20report%20a%20lost%20credit%20card?"
+               class="btn secondary">
+                Test: Lost Credit Card
+            </a>
 
-/* Buttons */
-.btn {
-    display: block;
-    width: fit-content;
-    padding: 12px 20px;
-    margin-top: 12px;
+            <a href="/docs" class="btn tertiary">
+                Swagger API Docs
+            </a>
+        </div>
 
-    border-radius: 10px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 16px;
+        <!-- Card 3 -->
+        <div class="glass-card">
+            <h2>🌐 Your Public Backend URL</h2>
+            <p id="backend-url">Loading...</p>
 
-    color: #0A1A2F;
-    background: #ffffff;
-    border: 1px solid rgba(255,255,255,0.5);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            <script>
+                // Auto-display the current URL even behind proxies
+                document.getElementById("backend-url").textContent =
+                    window.location.origin;
+            </script>
+        </div>
 
-    transition: all 0.25s ease;
-}
+    </div>
 
-.btn:hover {
-    background: #dfe9ff;
-}
+    <!-- Footer -->
+    <div class="footer">
+        <p>Fintech RAG API • Powered by FastAPI + Phi-3.5</p>
+    </div>
 
-/* Secondary button (blue) */
-.btn.secondary {
-    background: #e5f1ff;
-    border-color: #c2d8ff;
-}
-
-.btn.secondary:hover {
-    background: #d1e3ff;
-}
-
-/* Tertiary button (dark) */
-.btn.tertiary {
-    background: #0f2239;
-    color: #ffffff;
-    border: 1px solid rgba(255,255,255,0.15);
-}
-
-.btn.tertiary:hover {
-    background: #153258;
-}
-
-/* Footer */
-.footer {
-    text-align: center;
-    padding: 24px;
-    opacity: 0.8;
-    margin-top: 40px;
-    font-size: 14px;
-}
+</body>
+</html>
