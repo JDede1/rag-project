@@ -3,26 +3,24 @@ search_engine.py
 -------------------------------------------------------
 FAISS-based semantic retriever for chunked RBC FAQ data.
 
-Updated:
-    • Uses SAME embedding model as Phase 3 (Phi-3.5-Mini-Instruct)
-    • Loads FAISS + metadata directly from /data/index/
-    • Computes Phi embeddings for queries
+Corrected Version (Stable):
+    • Uses SAME embedding model as Phase 3 → MPNet (768-D)
+    • Loads FAISS + metadata from /data/index/
+    • Computes MPNet embeddings for queries
     • Normalizes vectors for cosine similarity
-    • Returns JSON-safe dicts with provenance
+    • Returns JSON-safe structured dicts with provenance
 """
 
 import faiss
 import numpy as np
 import pandas as pd
 from pathlib import Path
-
-import torch
-from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 
 
 class RbcRetriever:
     def __init__(self):
-        """Load FAISS index, metadata, and Phi embedding model once at backend startup."""
+        """Load FAISS index, metadata, and MPNet embedding model."""
 
         # Phase 3 directory structure
         base_dir = Path(__file__).resolve().parents[2]
@@ -31,54 +29,30 @@ class RbcRetriever:
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
-        # Must match Phase 3
-        self.model_name = "microsoft/Phi-3.5-mini-instruct"
+        # IMPORTANT: Must match Phase 3 embeddings EXACTLY
+        self.model_name = "sentence-transformers/all-mpnet-base-v2"
 
         # Load FAISS + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
-        # Load Phi model (same one used for Phase 3 embeddings)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(
-            self.model_name,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto" if torch.cuda.is_available() else None,
-        )
+        # Load MPNet (Phase 3 embedding model)
+        self.model = SentenceTransformer(self.model_name)
 
         print(f"Loaded FAISS index with {self.index.ntotal} vectors")
         print(f"Loaded metadata rows: {len(self.metadata)}")
         print(f"Retriever model: {self.model_name}")
 
     # ---------------------------------------------------------
-    # Encode query using Phi-3.5 (same as Phase 3 embeddings)
+    # Encode query using MPNet
     # ---------------------------------------------------------
     def embed_query(self, text: str):
-        """Generate Phi embedding for a single query string."""
-
-        encoded = self.tokenizer(
-            text,
-            truncation=True,
-            padding=True,
-            return_tensors="pt"
-        ).to(self.model.device)
-
-        with torch.no_grad():
-            model_out = self.model(**encoded)
-
-        # Mean pooling
-        last_hidden = model_out.last_hidden_state
-        attention_mask = encoded["attention_mask"].unsqueeze(-1)
-
-        masked = last_hidden * attention_mask
-        summed = masked.sum(dim=1)
-        counts = attention_mask.sum(dim=1)
-        mean_pool = summed / counts
-
-        # Convert to NumPy
-        emb = mean_pool.cpu().numpy()
-
-        return emb
+        """Generate MPNet embedding for a single query string."""
+        return self.model.encode(
+            [text],
+            convert_to_numpy=True,
+            normalize_embeddings=False  # We'll normalize manually
+        )
 
     # ---------------------------------------------------------
     # Search
@@ -124,7 +98,7 @@ class RbcRetriever:
 
             results.append(entry)
 
-        # Sort and return
+        # Sort results by descending similarity score
         return sorted(results, key=lambda r: r["score"], reverse=True)
 
     # ---------------------------------------------------------
