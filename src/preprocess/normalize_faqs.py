@@ -3,18 +3,13 @@ normalize_faqs.py
 -------------------------------------------------------
 Normalize FAQ entries so that all question/answer pairs:
 
-    - Follow consistent structure
-    - Have valid questions
-    - Preserve answer structure
-    - Remove mislabeled headers or navigation elements
+    - Follow consistent question structure
+    - Remove section headers / navigation artifacts
+    - Repair missing question marks for interrogative sentences
+    - Preserve provenance metadata
     - Prepare the dataset for splitting and chunking
 
-This version preserves provenance fields:
-    - url
-    - source
-    - retrieved_at
-
-Runs AFTER clean_rbc_faqs.py but BEFORE splitting.
+Runs AFTER clean_rbc_faqs.py and BEFORE split_compound_faqs.py.
 """
 
 import re
@@ -31,42 +26,84 @@ OUTPUT_PATH = BASE_DIR / "data" / "processed" / "rbc_faqs_normalized.parquet"
 
 
 # -------------------------------------------------------
-# QUESTION VALIDATION
+# HEADER / NAVIGATION DETECTION
 # -------------------------------------------------------
-def looks_like_question(text: str) -> bool:
+HEADER_PATTERNS = [
+    r"^about\b",
+    r"^overview\b",
+    r"^features\b",
+    r"^eligibility\b",
+    r"^general questions\b",
+    r"^general questions & concerns\b",
+    r"^support\b",
+    r"^help\b",
+    r"^you may also like\b",
+    r"^other ways to bank\b",
+    r"^legal\b",
+    r"^privacy\b",
+    r"^contact\b",
+]
+
+
+def is_section_header(text: str) -> bool:
     """
-    Validate whether a string is a real FAQ question.
+    Detect headings or navigation text that should not be treated as questions.
     """
     if not isinstance(text, str):
         return False
 
-    stripped = text.strip()
+    t = text.strip().lower()
+    for p in HEADER_PATTERNS:
+        if re.match(p, t):
+            return True
 
-    # Minimum length
-    if len(stripped) < 8:
+    # Short or generic non-questions
+    if len(t) < 8:
+        return True
+
+    # Generic labels (common RBC)
+    if t in ["faqs", "faq", "questions", "general", "information"]:
+        return True
+
+    return False
+
+
+# -------------------------------------------------------
+# QUESTION VALIDATION (SMART MODE)
+# -------------------------------------------------------
+QUESTION_PREFIXES = (
+    "how", "what", "why", "when", "where", "who",
+    "can", "could", "does", "do", "is", "are",
+    "should", "will", "would", "may", "might"
+)
+
+
+def looks_like_real_question(text: str) -> bool:
+    """
+    Smart-mode question validator:
+      - Must not be a header
+      - Must be at least moderate length
+      - Must be interrogative or end with '?'
+    """
+    if not isinstance(text, str):
         return False
 
-    # Must end with question mark
-    if not stripped.endswith("?"):
+    t = text.strip()
+    t_lower = t.lower()
+
+    # Reject section headers before anything else
+    if is_section_header(t_lower):
         return False
 
-    # Headers frequently mislabeled as questions
-    invalid_headers = [
-        r"^About\b",
-        r"^Overview\b",
-        r"^Features\b",
-        r"^Eligibility\b",
-        r"^You may also like\b",
-        r"^Other ways to bank\b",
-        r"^Legal\b",
-        r"^Privacy\b",
-    ]
+    # End with question mark: almost always valid
+    if t.endswith("?") and len(t) >= 6:
+        return True
 
-    for p in invalid_headers:
-        if re.match(p, stripped, flags=re.IGNORECASE):
-            return False
+    # No question mark → check interrogative pattern
+    if any(t_lower.startswith(pref) for pref in QUESTION_PREFIXES):
+        return True
 
-    return True
+    return False
 
 
 # -------------------------------------------------------
@@ -74,58 +111,57 @@ def looks_like_question(text: str) -> bool:
 # -------------------------------------------------------
 def normalize_answer(text: str) -> str:
     """
-    Normalize answers without destroying structure.
-    Keep paragraphs and line breaks intact.
+    Normalize answers while preserving paragraph boundaries.
     """
     if not isinstance(text, str):
         return ""
 
-    # Standardize line breaks
     text = text.replace("\r", "\n")
 
-    # Remove excessive spaces on lines
-    lines = [re.sub(r"[ \t]+", " ", line).rstrip() for line in text.split("\n")]
+    lines = []
+    for line in text.split("\n"):
+        line = line.rstrip()
+        line = re.sub(r"[ \t]+", " ", line)
+        line = re.sub(r"^\s*[-•]\s*", "", line)
+        if line.strip():
+            lines.append(line.strip())
 
-    # Remove stray markdown bullets at line start
-    cleaned_lines = [re.sub(r"^\s*[-•]\s*", "", ln) for ln in lines]
-
-    # Restore as multi-line text
-    text = "\n".join(cleaned_lines).strip()
-
-    return text
+    return "\n".join(lines).strip()
 
 
 # -------------------------------------------------------
-# ROW NORMALIZATION LOGIC
+# SINGLE ROW NORMALIZATION LOGIC
 # -------------------------------------------------------
 def normalize_faq_row(question: str, answer: str):
     """
-    Normalize a single FAQ row.
-
-    Rules:
-        - If question starts like a natural question but lacks '?',
-          add the '?'.
-        - If question is not valid, discard the row entirely
-          (do NOT merge into answer).
-        - Clean answer structure.
+    Smart-mode row normalizer:
+      - Skip section headers (never merge into answers)
+      - Repair missing '?' for interrogative sentences
+      - Ensure the answer is non-empty
     """
     q = question.strip() if isinstance(question, str) else ""
     a = answer.strip() if isinstance(answer, str) else ""
 
-    # Add missing question mark if obviously a question
-    if q and not q.endswith("?"):
-        prefixes = ("how", "what", "why", "when", "where", "who",
-                    "can", "does", "is", "are", "do", "should")
-        if q.lower().startswith(prefixes):
-            q = q.rstrip(".") + "?"
-
-    # If still not a valid question, discard the row
-    if not looks_like_question(q):
+    if not q or not a:
         return None, None
 
-    # Clean answer while preserving structure
-    normalized_a = normalize_answer(a)
+    q_lower = q.lower().strip()
 
+    # Reject section headers immediately
+    if is_section_header(q_lower):
+        return None, None
+
+    # Add missing '?' when it's clearly a question
+    if not q.endswith("?"):
+        if any(q_lower.startswith(pref) for pref in QUESTION_PREFIXES):
+            q = q.rstrip(".") + "?"
+
+    # Final real-question validation
+    if not looks_like_real_question(q):
+        return None, None
+
+    # Normalize answer
+    normalized_a = normalize_answer(a)
     if not normalized_a:
         return None, None
 
@@ -140,8 +176,7 @@ def normalize_faqs():
     df = pd.read_parquet(INPUT_PATH)
     print(f"Loaded {len(df)} rows")
 
-    # Preserve provenance columns
-    provenance_cols = [col for col in ["url", "source", "retrieved_at"] if col in df.columns]
+    provenance_cols = [c for c in ["url", "source", "retrieved_at"] if c in df.columns]
 
     normalized_rows = []
 
@@ -151,7 +186,6 @@ def normalize_faqs():
 
         norm_q, norm_a = normalize_faq_row(q, a)
 
-        # Skip rows with invalid questions
         if not norm_q or not norm_a:
             continue
 
@@ -160,7 +194,6 @@ def normalize_faqs():
             "answer": norm_a,
         }
 
-        # Add provenance fields if present
         for col in provenance_cols:
             entry[col] = row[col]
 
