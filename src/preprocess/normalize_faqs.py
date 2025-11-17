@@ -57,11 +57,11 @@ def is_section_header(text: str) -> bool:
         if re.match(p, t):
             return True
 
-    # Short or generic non-questions
+    # Too short → almost always a heading
     if len(t) < 8:
         return True
 
-    # Generic labels (common RBC)
+    # Generic category labels frequently scraped
     if t in ["faqs", "faq", "questions", "general", "information"]:
         return True
 
@@ -82,7 +82,6 @@ def looks_like_real_question(text: str) -> bool:
     """
     Smart-mode question validator:
       - Must not be a header
-      - Must be at least moderate length
       - Must be interrogative or end with '?'
     """
     if not isinstance(text, str):
@@ -91,15 +90,15 @@ def looks_like_real_question(text: str) -> bool:
     t = text.strip()
     t_lower = t.lower()
 
-    # Reject section headers before anything else
+    # Reject known section headers
     if is_section_header(t_lower):
         return False
 
-    # End with question mark: almost always valid
+    # Ends with question mark → almost always valid
     if t.endswith("?") and len(t) >= 6:
         return True
 
-    # No question mark → check interrogative pattern
+    # Interrogative prefix → considered a question
     if any(t_lower.startswith(pref) for pref in QUESTION_PREFIXES):
         return True
 
@@ -145,7 +144,7 @@ def normalize_faq_row(question: str, answer: str):
     if not q or not a:
         return None, None
 
-    q_lower = q.lower().strip()
+    q_lower = q.lower()
 
     # Reject section headers immediately
     if is_section_header(q_lower):
@@ -156,7 +155,7 @@ def normalize_faq_row(question: str, answer: str):
         if any(q_lower.startswith(pref) for pref in QUESTION_PREFIXES):
             q = q.rstrip(".") + "?"
 
-    # Final real-question validation
+    # Final validation
     if not looks_like_real_question(q):
         return None, None
 
