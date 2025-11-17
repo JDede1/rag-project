@@ -35,7 +35,6 @@ html, body {
 /* ============================================================
    CHAT MESSAGE BUBBLES
    ============================================================ */
-
 .stChatMessage {
     border-radius: 14px !important;
     padding: 14px !important;
@@ -61,7 +60,6 @@ html, body {
 /* ============================================================
    SIDEBAR & CHUNK PROVENANCE CARDS
    ============================================================ */
-
 .sidebar-card {
     padding: 14px;
     background: rgba(255,255,255,0.10);
@@ -87,9 +85,7 @@ html, body {
 
 /* ============================================================
    INPUTS — CLEAN FINTECH STYLE
-   (Text inputs, textareas, standard widgets)
    ============================================================ */
-
 input,
 textarea,
 .stTextInput input {
@@ -108,7 +104,6 @@ textarea::placeholder {
 /* ============================================================
    BUTTONS
    ============================================================ */
-
 button,
 .stButton>button {
     background: linear-gradient(135deg, #72d5ff, #b6ecff);
@@ -130,7 +125,6 @@ button:hover,
 /* ============================================================
    LOADING TEXT
    ============================================================ */
-
 .typing {
     font-style: italic;
     color: #cfd9e6;
@@ -141,7 +135,6 @@ button:hover,
 /* ============================================================
    UTILITY CLASSES
    ============================================================ */
-
 .center   { text-align: center; }
 .mt-2     { margin-top: 12px; }
 .mt-3     { margin-top: 18px; }
@@ -152,12 +145,14 @@ button:hover,
 
 
 /* ============================================================
-   FINAL FIX — FULL READABILITY FOR CHAT INPUT (st.chat_input)
+   FINAL FIX — CORRECT & SAFE SELECTOR FOR STREAMLIT CHAT INPUT
    ============================================================ */
 
-/* Main chat input box */
-.stChatInputContainer textarea {
-    background: rgba(255, 255, 255, 0.92) !important;
+/* Streamlit officially uses: data-testid="stChatInput" */
+
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] input {
+    background: rgba(255, 255, 255, 0.95) !important;
     color: #0A1A2F !important;
     caret-color: #0A1A2F !important;
     font-weight: 500 !important;
@@ -165,22 +160,9 @@ button:hover,
     border: 1px solid rgba(30, 50, 70, 0.25) !important;
 }
 
-/* Placeholder text */
-.stChatInputContainer textarea::placeholder {
-    color: #4A5568 !important;
-    opacity: 1 !important;
-}
-
-/* Some Streamlit builds use <input> instead of <textarea> */
-.stChatInputContainer input {
-    background: rgba(255, 255, 255, 0.92) !important;
-    color: #0A1A2F !important;
-    caret-color: #0A1A2F !important;
-    font-weight: 500 !important;
-    border-radius: 12px !important;
-}
-
-.stChatInputContainer input::placeholder {
+/* Placeholder visibility */
+[data-testid="stChatInput"] textarea::placeholder,
+[data-testid="stChatInput"] input::placeholder {
     color: #4A5568 !important;
     opacity: 1 !important;
 }
