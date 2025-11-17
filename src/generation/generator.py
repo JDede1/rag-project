@@ -1,14 +1,11 @@
 """
-generator.py
--------------------------------------------------------
-Hybrid-grounded RAG generator for Phi-3.5-Mini-Instruct.
-
-Upgrades in this corrected version:
-    • Removes system / instruction leakage
-    • Cuts everything before/after the "Answer:" section
-    • Prevents Phi from echoing the entire prompt
-    • Stronger regex-style extraction logic
-    • Still deterministic, still hallucination-safe
+generator.py — Strict Grounded RAG Generator for Phi-3.5-Mini
+---------------------------------------------------------------
+This version prevents:
+    • Prompt echo
+    • Instruction leakage
+    • Sentence continuation hallucinations
+    • Answers that mix context with invented text
 """
 
 import torch
@@ -34,20 +31,22 @@ model = AutoModelForCausalLM.from_pretrained(
 
 
 # ---------------------------------------------------------
-# Prompt Builder for Phi (no chat template)
+# Prompt Builder (Stricter)
 # ---------------------------------------------------------
 def build_prompt(question: str, chunks: list[str]) -> str:
     """
-    Phi-3.5 is sensitive to long instructions.
-    Using a minimal, tightly controlled prompt prevents leakage.
+    Strict grounding:
+       • No creative continuation
+       • No references outside context
+       • If info missing → "I don't know."
     """
 
     context_text = "\n\n".join(chunks) if chunks else "No context available."
 
     prompt = (
-        "You are an assistant that answers ONLY using the provided context.\n"
-        "If the answer is not in the context, reply with exactly: I don't know.\n"
-        "Do NOT add outside facts.\n\n"
+        "Answer the question ONLY using the context below.\n"
+        "If the answer is not contained fully in the context, reply: I don't know.\n"
+        "Do not infer, assume, or extend beyond what is explicitly stated.\n\n"
         f"Context:\n{context_text}\n\n"
         f"Question: {question}\n"
         "Answer:"
@@ -57,72 +56,90 @@ def build_prompt(question: str, chunks: list[str]) -> str:
 
 
 # ---------------------------------------------------------
-# Robust Output Extraction (Corrected)
+# Output Extraction (Strict)
 # ---------------------------------------------------------
 def extract_answer(full_output: str) -> str:
     """
     Strict cleaning:
-        1. Remove everything before the final 'Answer:'
-        2. Drop system/echoed instructions
-        3. Prevent leakage of prompt content
+      • Keep text after last 'Answer:'
+      • Remove prompt echo
+      • Remove instruction fragments
+      • Keep ONLY first sentence unless fully grounded
     """
 
     text = full_output.strip()
 
-    # 1 — Keep everything AFTER the last occurrence of "Answer:"
+    # Keep only last after "Answer:"
     if "Answer:" in text:
         text = text.split("Answer:")[-1].strip()
 
-    # 2 — Remove common instruction echoes
+    # Remove echoes
     bad_phrases = [
         "You are an assistant",
         "ONLY using the provided context",
         "Do NOT add outside facts",
+        "If the answer is not in the context",
         "Context:",
         "Question:",
         "Answer only using the context",
         "Use only the context",
-        "Give the answer using only the context",
     ]
     for p in bad_phrases:
         text = text.replace(p, "").strip()
 
-    # 3 — Remove any leftover prompt fragments
-    for word in ["Context", "Question", "system", "assistant"]:
-        if word + ":" in text:
-            text = text.split(word + ":")[0].strip()
+    # Remove trailing prompt fragments
+    for word in ["Context:", "Question:", "system:", "assistant:"]:
+        if word in text:
+            text = text.split(word)[0].strip()
 
-    # Final cleanup
+    # Keep only first sentence
+    if "." in text:
+        text = text.split(".")[0].strip() + "."
+
     return text.strip()
 
 
 # ---------------------------------------------------------
-# Hybrid Grounding (hallucination guard)
+# Strict Hybrid Grounding
 # ---------------------------------------------------------
 def hybrid_grounding(answer: str, chunks: list[str]) -> bool:
+    """
+    Stricter grounding rules:
+        1. Must share >= 3 non-stopword tokens with context
+        2. OR answer is exact substring of any chunk
+        3. OR matches a phone number from context
+    """
+
     if not answer or answer.lower() == "i don't know":
         return True
 
     ans_tokens = set(answer.lower().split())
-    ctx_tokens = set(" ".join(chunks).lower().split())
+    ctx_text = " ".join(chunks).lower()
+    ctx_tokens = set(ctx_text.split())
 
     stopwords = {
         "the", "is", "a", "to", "of", "and", "in",
-        "for", "on", "by", "you", "your", "or"
+        "for", "on", "by", "you", "your", "or", "we"
     }
+
     ans_tokens = ans_tokens - stopwords
 
-    # Rule 1 — token overlap
-    if len(ans_tokens.intersection(ctx_tokens)) >= 1:
+    # Rule 1: token overlap (>= 3)
+    if len(ans_tokens.intersection(ctx_tokens)) >= 3:
         return True
 
-    # Rule 2 — soft substring match
+    # Rule 2: strict substring containment
+    ans_low = answer.lower()
     for ch in chunks:
-        ch_low = ch.lower()
-        if ch_low[:60] in answer.lower():
+        if ans_low in ch.lower():
             return True
-        if len(ch_low) > 40 and ch_low[:50] in answer.lower():
-            return True
+
+    # Rule 3: phone numbers
+    import re
+    answer_phones = re.findall(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b", ans_low)
+    context_phones = re.findall(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b", ctx_text)
+    if any(p in context_phones for p in answer_phones):
+        return True
 
     return False
 
@@ -141,18 +158,17 @@ def generate_answer(question: str, chunks: list[str]) -> str:
     with torch.no_grad():
         output_ids = model.generate(
             **encoded,
-            max_new_tokens=180,
+            max_new_tokens=130,
             temperature=0.0,
             top_p=1.0,
             do_sample=False,
-            repetition_penalty=1.05
+            repetition_penalty=1.05,
         )
 
     full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
     answer = extract_answer(full_output)
 
-    # Hallucination filter
+    # Final hallucination check
     if not hybrid_grounding(answer, chunks):
         return "I don't know."
 
