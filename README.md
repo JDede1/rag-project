@@ -251,33 +251,44 @@ Connected using a **Cloudflare tunnel** for secure public access.
 ```mermaid
 flowchart TD
 
-    A[User Streamlit UI] --> B[FastAPI Backend ask endpoint]
+    %% USER INTERACTION
+    User[User / Browser]
+    User --> Streamlit
 
-    B --> C[RbcRetriever]
-    C --> C1[MPNet Encoder]
-    C --> C2[FAISS Index]
-    C --> C3[Metadata Store]
-    C -->|top k chunks| D
+    %% FRONTEND
+    Streamlit[Streamlit UI\n(Cloudflare Tunnel)] --> FastAPI
 
-    D[Strict Grounded Generator] --> D1[Phi 3.5 mini LLM]
-    D --> D2[Strict Prompt Builder]
-    D --> D3[Answer Extractor and Hybrid Grounding]
-    D --> E
+    %% BACKEND API
+    FastAPI[FastAPI Backend\n/ask Endpoint]
 
-    E[Final Grounded Answer] --> A
+    %% RETRIEVAL
+    FastAPI --> Retriever
+    Retriever[RbcRetriever\nFAISS + Metadata]
+    Retriever -->|Top-k Chunks| Generator
 
-    subgraph OFFLINE[Offline Pipelines]
+    %% GENERATION
+    Generator[Grounded Answer Generator]
+    Generator --> LLM
+
+    LLM[Phi-3.5-mini\n(Pytorch)]
+
+    %% RESPONSE
+    Generator --> FinalAnswer[Final Answer]
+    FinalAnswer --> User
+
+    %% OFFLINE PIPELINE
+    subgraph OfflinePipelines[Offline Build-Time Pipelines]
         direction TB
-        P1[PHASE 1 Scraper Pipeline]
-        P2[PHASE 2 Preprocessing]
-        P3[PHASE 3 Embeddings and FAISS]
-        P5[PHASE 5 Evaluation]
+        
+        Scraper[Phase 1: Scraper]
+        Preprocess[Phase 2: Preprocessing]
+        Embeddings[Phase 3: Embeddings + FAISS]
+        Eval[Phase 5: Evaluation]
     end
 
-    P1 --> P2 --> P3 --> P5
-    P3 --> C
+    Scraper --> Preprocess --> Embeddings --> Eval
+    Embeddings --> Retriever
 ```
-
 
 ---
 
@@ -288,32 +299,50 @@ flowchart TD
 ```mermaid
 flowchart TD
 
-    A[User / Streamlit UI] --> B[FastAPI Backend /ask]
+    %% ================================
+    %% USER INTERFACE
+    %% ================================
+    A[User<br/>Streamlit Web UI<br/>(Cloudflare Tunnel)]
+    A --> B[/FastAPI Backend<br/>/ask Endpoint via Ngrok/]
 
-    B --> C[RbcRetriever]
-    C --> C1[MPNet Encoder]
-    C --> C2[FAISS Index]
-    C --> C3[Metadata Store]
-    C -->|top-k chunks| D
+    %% ================================
+    %% RETRIEVAL FLOW
+    %% ================================
+    B --> C[RbcRetriever<br/>search_engine.py]
+    C --> C1(MPNet Encoder)
+    C --> C2(FAISS Index)
+    C --> C3(Metadata Store)
+    C -->|Top-K Chunks| D
 
-    D[Strict Grounded Generator] --> D1[Phi-3.5-mini LLM]
-    D --> D2[Strict Prompt Builder]
-    D --> D3[Answer Extractor and Hybrid Grounding]
+    %% ================================
+    %% GENERATION FLOW
+    %% ================================
+    D[Strict Grounded Generator<br/>generator.py]
+    D --> D1(Phi-3.5-Mini<br/>PyTorch LLM)
+    D --> D2(Prompt Builder)
+    D --> D3(Answer Extractor + Hybrid Grounding)
     D --> E
 
+    %% ================================
+    %% RETURN TO USER
+    %% ================================
     E[Final Grounded Answer] --> A
 
-    subgraph OFFLINE[Offline Pipelines Before Deployment]
+    %% ================================
+    %% OFFLINE PIPELINES
+    %% ================================
+    subgraph OFFLINE[Offline Pipelines (Build Stages)]
         direction TB
-        P1[PHASE 1: Scraper Pipeline]
-        P2[PHASE 2: Preprocessing]
-        P3[PHASE 3: Embeddings and FAISS]
-        P5[PHASE 5: Evaluation]
+        P1[PHASE 1 — Scraper<br/>Playwright → Raw JSON]
+        P2[PHASE 2 — Preprocessing<br/>Clean → Normalize → Split → Chunk]
+        P3[PHASE 3 — Embeddings + FAISS<br/>embeddings.npy + faiss.index]
+        P5[PHASE 5 — Evaluation<br/>evaluate_rag.py]
     end
 
     P1 --> P2 --> P3 --> P5
     P3 --> C
 ```
+
 
 ---
 
@@ -323,12 +352,31 @@ From raw HTML → structured dataset → embeddings → FAISS → RAG pipeline.
 
 ```mermaid
 flowchart LR
-    RAW[Raw RBC FAQ Pages<br/>HTML/Markdown] --> CLEAN[Preprocessing<br/>Clean • Normalize • Split]
-    CLEAN --> EMB[Embeddings<br/>MiniLM-L6-v2]
-    EMB --> FAISS[FAISS Index<br/>Normalized Cosine Similarity]
-    FAISS --> API[FastAPI Backend<br/>/ask endpoint]
-    API --> UI[Streamlit UI<br/>Chat Frontend]
+
+    %% PHASE 1
+    RawHTML[Raw RBC FAQ Pages\n(Playwright Scraper)]
+    RawHTML --> JSON[Raw JSON Export]
+
+    %% PHASE 2
+    JSON --> Clean[Clean FAQs]
+    Clean --> Normalize[Normalize Questions & Answers]
+    Normalize --> Split[Split Compound FAQs]
+    Split --> Chunk[Chunk into RAG-Friendly Segments]
+
+    %% PHASE 3
+    Chunk --> Embeddings[MPNet Embeddings\n(embedding_text)]
+    Embeddings --> FAISS[(FAISS Index)]
+    Chunk --> Metadata[Metadata Store\nParquet]
+
+    %% READY FOR LIVE RAG
+    FAISS --> ReadyIndex[RAG-Ready Index]
+    Metadata --> ReadyIndex
+
+    %% PHASE 5
+    ReadyIndex --> Eval[Evaluation Dataset\n(Phase 5)]
+    Eval --> Metrics[Grounding & Hallucination Metrics]
 ```
+
 
 ---
 
@@ -1504,6 +1552,7 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
 
