@@ -6,7 +6,14 @@ This version prevents:
     • Instruction leakage
     • Sentence continuation hallucinations
     • Answers that mix context with invented text
+
+It also exposes a reusable `is_grounded(answer, chunks)` function
+so that both the generator and the evaluation pipeline can share
+the same core grounding logic (Balanced mode).
 """
+
+import re
+from typing import List
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -33,7 +40,7 @@ model = AutoModelForCausalLM.from_pretrained(
 # ---------------------------------------------------------
 # Prompt Builder (Stricter)
 # ---------------------------------------------------------
-def build_prompt(question: str, chunks: list[str]) -> str:
+def build_prompt(question: str, chunks: List[str]) -> str:
     """
     Strict grounding:
        • No creative continuation
@@ -64,7 +71,7 @@ def extract_answer(full_output: str) -> str:
       • Keep text after last 'Answer:'
       • Remove prompt echo
       • Remove instruction fragments
-      • Keep ONLY first sentence unless fully grounded
+      • Keep ONLY first sentence
     """
 
     text = full_output.strip()
@@ -73,7 +80,7 @@ def extract_answer(full_output: str) -> str:
     if "Answer:" in text:
         text = text.split("Answer:")[-1].strip()
 
-    # Remove echoes
+    # Remove echoes / prompt fragments
     bad_phrases = [
         "You are an assistant",
         "ONLY using the provided context",
@@ -87,12 +94,11 @@ def extract_answer(full_output: str) -> str:
     for p in bad_phrases:
         text = text.replace(p, "").strip()
 
-    # Remove trailing prompt fragments
     for word in ["Context:", "Question:", "system:", "assistant:"]:
         if word in text:
             text = text.split(word)[0].strip()
 
-    # Keep only first sentence
+    # Keep only first sentence (conservative)
     if "." in text:
         text = text.split(".")[0].strip() + "."
 
@@ -100,54 +106,107 @@ def extract_answer(full_output: str) -> str:
 
 
 # ---------------------------------------------------------
-# Strict Hybrid Grounding
+# Shared Grounding Utilities (Balanced)
 # ---------------------------------------------------------
-def hybrid_grounding(answer: str, chunks: list[str]) -> bool:
+
+_STOPWORDS = {
+    "the", "is", "a", "to", "of", "and", "in",
+    "for", "on", "by", "you", "your", "or", "we",
+    "with", "at", "from", "as", "an", "it", "be",
+}
+
+
+_PHONE_RE = re.compile(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b")
+_NUMBER_RE = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
+
+
+def _simple_tokens(text: str) -> List[str]:
+    if not text:
+        return []
+    return [t for t in re.findall(r"\w+", text.lower()) if t not in _STOPWORDS]
+
+
+def is_grounded(answer: str, chunks: List[str]) -> bool:
     """
-    Stricter grounding rules:
-        1. Must share >= 3 non-stopword tokens with context
-        2. OR answer is exact substring of any chunk
-        3. OR matches a phone number from context
+    Balanced grounding logic shared between:
+        • Online generator (FastAPI /ask)
+        • Offline evaluator (evaluate_rag.py)
+
+    Grounded if ANY of the following holds:
+        1. Answer is "I don't know"  → treated as safe (non-hallucination)
+        2. Answer is (almost) a substring of any context chunk
+        3. Answer shares >= 2 non-stopword tokens with the context
+        4. Answer contains a phone number or numeric pattern found in context
     """
 
-    if not answer or answer.lower() == "i don't know":
+    if not answer:
+        return False
+
+    ans = answer.strip()
+    ans_low = ans.lower()
+
+    # 1. Explicit "I don't know" is treated as non-hallucination
+    if ans_low in {"i don't know", "i don't know."}:
         return True
 
-    ans_tokens = set(answer.lower().split())
-    ctx_text = " ".join(chunks).lower()
-    ctx_tokens = set(ctx_text.split())
+    if not chunks:
+        return False
 
-    stopwords = {
-        "the", "is", "a", "to", "of", "and", "in",
-        "for", "on", "by", "you", "your", "or", "we"
-    }
+    ctx_text = " ".join(chunks)
+    ctx_low = ctx_text.lower()
 
-    ans_tokens = ans_tokens - stopwords
-
-    # Rule 1: token overlap (>= 3)
-    if len(ans_tokens.intersection(ctx_tokens)) >= 3:
+    # 2. Substring containment (ignoring trailing period)
+    base_ans = ans_low.rstrip(".").strip()
+    if base_ans and base_ans in ctx_low:
         return True
 
-    # Rule 2: strict substring containment
-    ans_low = answer.lower()
-    for ch in chunks:
-        if ans_low in ch.lower():
-            return True
+    # 3. Entity match: phone numbers and numeric patterns (rates, amounts, etc.)
+    ans_phones = set(_PHONE_RE.findall(ans_low))
+    ctx_phones = set(_PHONE_RE.findall(ctx_low))
+    if ans_phones & ctx_phones:
+        return True
 
-    # Rule 3: phone numbers
-    import re
-    answer_phones = re.findall(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b", ans_low)
-    context_phones = re.findall(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b", ctx_text)
-    if any(p in context_phones for p in answer_phones):
+    ans_nums = set(_NUMBER_RE.findall(ans_low))
+    ctx_nums = set(_NUMBER_RE.findall(ctx_low))
+    if ans_nums & ctx_nums:
+        return True
+
+    # 4. Token overlap (>= 2 non-stopword tokens)
+    ans_tokens = _simple_tokens(ans_low)
+    ctx_tokens = set(_simple_tokens(ctx_low))
+
+    overlap = [t for t in ans_tokens if t in ctx_tokens]
+    if len(overlap) >= 2:
         return True
 
     return False
 
 
 # ---------------------------------------------------------
+# Backwards-Compatible Wrapper
+# ---------------------------------------------------------
+def hybrid_grounding(answer: str, chunks: List[str]) -> bool:
+    """
+    Backwards-compatible wrapper so older code that calls
+    `hybrid_grounding()` continues to work.
+
+    Internally delegates to `is_grounded()` which implements
+    the Balanced grounding logic.
+    """
+    return is_grounded(answer, chunks)
+
+
+# ---------------------------------------------------------
 # Main Generator
 # ---------------------------------------------------------
-def generate_answer(question: str, chunks: list[str]) -> str:
+def generate_answer(question: str, chunks: List[str]) -> str:
+    """
+    Main RAG answer generator:
+        • Builds a strictly grounded prompt
+        • Runs Phi-3.5-mini-instruct with deterministic decoding
+        • Cleans the raw output
+        • Applies final grounding check via `is_grounded`
+    """
     if not chunks:
         return "I don't know."
 
@@ -168,8 +227,8 @@ def generate_answer(question: str, chunks: list[str]) -> str:
     full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     answer = extract_answer(full_output)
 
-    # Final hallucination check
-    if not hybrid_grounding(answer, chunks):
+    # Final hallucination check using shared Balanced grounding
+    if not is_grounded(answer, chunks):
         return "I don't know."
 
     return answer.strip()
