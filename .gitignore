@@ -1,148 +1,42 @@
-# =======================================================
-#  PYTHON AND ENVIRONMENT FILES
-# =======================================================
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.log
-*.tmp
-*.swp
-*.bak
-*.old
+# ===========================
+# RAG PROJECT - GITIGNORE
+# JDede1 / rag-project
+# ===========================
 
-# Virtual environments
-venv/
-env/
-.venv/
-.conda/
-*.env
-*.venv
-*.egg-info/
-*.egg
-.eggs/
-.env/
-.envrc
-.DS_Store
-
-# Jupyter / Colab notebooks
-.ipynb_checkpoints/
-*.ipynb_checkpoints/
-
-# System or editor files
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-Thumbs.db
-
-# =======================================================
-#  DATA, LOGS, AND OUTPUT
-# =======================================================
+# ---- DATA & INDEX FILES (DO NOT PUSH) ----
+data/index/
 data/raw/
 data/processed/
 data/reports/
+data/eval/
+
+# Remove Drive symlink if it reappears
+data -> /content/drive/MyDrive/rag_project_data
+
+# ---- LOGS ----
+*.log
 logs/
-offload/
-__outputs__/
-__results__/
+cf_tunnel.log
+rag_llm_url.txt
 
-# Large index and model artifacts
-data/index/*.npy
-data/index/*.index
-data/index/*.parquet
-*.faiss
-*.npy
-*.pt
-*.bin
-*.safetensors
-*.h5
-*.ckpt
+# ---- PYTHON CACHE ----
+__pycache__/
+*.pyc
+*.pyo
 
-# =======================================================
-#  MODEL WEIGHTS AND CACHES
-# =======================================================
-# Hugging Face and Torch cache dirs
-~/.cache/
-~/.huggingface/
-~/.torch/
-~/.local/share/huggingface/
-~/.local/share/torch/
-
-# Local model storage
+# ---- MODEL CACHE (HuggingFace) ----
 models/
-checkpoints/
-cache/
-offload/
+huggingface/
+.cache/
+.env/
 
-# =======================================================
-#  KEYS AND TOKENS
-# =======================================================
-Keys/
-*.pem
-*.key
-*.token
-*.secrets
-*.json
-!src/**/*.json   # Allow structured app JSONs but not keys
+# ---- EDITOR / ENVIRONMENT FILES ----
+.vscode/
+.DS_Store
 
-# =======================================================
-#  DEPLOYMENT & INFRASTRUCTURE
-# =======================================================
-infra/terraform/.terraform/
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.backup
-*.tfvars
-*.tfvars.json
+# ---- COLAB CHECKPOINTS ----
+.ipynb_checkpoints/
 
-# Docker
-*.pid
-*.sock
-*.pid.lock
-docker-compose.override.yml
-.env.docker
-
-# =======================================================
-#  MISCELLANEOUS
-# =======================================================
-# Lock files (optional to commit)
-requirements.lock
-poetry.lock
-Pipfile.lock
-
-# Build artifacts
-build/
-dist/
-*.spec
-
-# =======================================================
-#  PROJECT-SPECIFIC EXCLUSIONS
-# =======================================================
-# Logs and inspection outputs
-logs/scrape_rbc.log
-data/reports/rbc_faqs_report.md
-
-# Temporary visualization or test files
-test_outputs/
-tmp/
-notebooks/
-data/*
-logs/*
-Keys/*
-__pycache__/
-*.ipynb_checkpoints/
-data/*
-logs/*
-Keys/*
-__pycache__/
-*.ipynb_checkpoints/
-data/*
-logs/*
-Keys/*
-__pycache__/
-*.ipynb_checkpoints/
-data/*
-logs/*
-Keys/*
-__pycache__/
-*.ipynb_checkpoints/
+# ---- STREAMLIT INTERNAL CACHE ----
+frontend/__pycache__/
+api/__pycache__/
