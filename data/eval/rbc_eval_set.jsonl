@@ -1,0 +1,31 @@
+{"id": "k01", "type": "known", "question": "How do I report a lost or stolen RBC credit card?", "answer": "Call 1-800-769-2512 immediately to report a lost or stolen RBC credit card. RBC will block the card and issue a replacement."}
+{"id": "k02", "type": "known", "question": "How can I reset my RBC Online Banking password?", "answer": "You can reset your RBC Online Banking password using the 'Forgot Password' option and verifying your identity."}
+{"id": "k03", "type": "known", "question": "How do I send an Interac e-Transfer using RBC?", "answer": "You can send an Interac e-Transfer through RBC Online Banking or the RBC Mobile app by selecting a contact and entering an amount."}
+{"id": "k04", "type": "known", "question": "What should I do if my RBC debit card is not working?", "answer": "If your RBC debit card is not working, ensure it is activated and not damaged. You may also request a replacement card."}
+{"id": "k05", "type": "known", "question": "How do I change my address with RBC?", "answer": "You can update your address through RBC Online Banking under Personal Settings or by contacting RBC directly."}
+{"id": "k06", "type": "known", "question": "How can I increase my RBC credit card limit?", "answer": "You can request a credit limit increase through RBC Online Banking or by contacting RBC."}
+{"id": "k07", "type": "known", "question": "What are the daily ATM withdrawal limits for RBC?", "answer": "RBC accounts have daily ATM withdrawal limits that vary by card type and account profile."}
+{"id": "k08", "type": "known", "question": "How do I set up direct deposit with RBC?", "answer": "You can set up direct deposit by providing your RBC account number, transit number, and institution number to your employer."}
+{"id": "k09", "type": "known", "question": "How do I pay a bill using RBC Online Banking?", "answer": "You can pay a bill through RBC Online Banking by selecting Pay Bills, choosing a payee, and entering the payment amount."}
+{"id": "k10", "type": "known", "question": "How do I view my RBC credit card statements?", "answer": "You can view your RBC credit card statements through RBC Online Banking or the RBC Mobile app."}
+{"id": "k11", "type": "known", "question": "How do I activate my new RBC credit card?", "answer": "You can activate your new RBC credit card through RBC Online Banking or by calling the activation number."}
+{"id": "k12", "type": "known", "question": "How do I stop a recurring payment on my RBC account?", "answer": "You can stop a recurring payment by contacting the merchant or requesting assistance through RBC Online Banking."}
+{"id": "k13", "type": "known", "question": "How do I dispute a transaction on my RBC credit card?", "answer": "You can dispute a credit card transaction through RBC Online Banking or by contacting RBC directly."}
+{"id": "k14", "type": "known", "question": "How can I order a new RBC chequebook?", "answer": "You can order cheques through RBC Online Banking or by contacting RBC."}
+{"id": "k15", "type": "known", "question": "How do I enable RBC alerts on my account?", "answer": "You can enable account alerts through RBC Online Banking or the RBC Mobile app under account settings."}
+{"id": "k16", "type": "known", "question": "How do I update my RBC email address?", "answer": "You can update your email address through RBC Online Banking under Personal Information."}
+{"id": "k17", "type": "known", "question": "What should I do if I suspect fraud on my RBC account?", "answer": "If you suspect fraud, contact RBC immediately and review your recent transactions."}
+{"id": "k18", "type": "known", "question": "How do I deposit a cheque using the RBC Mobile app?", "answer": "You can deposit a cheque by taking a photo using the RBC Mobile app's Cheque Deposit feature."}
+{"id": "k19", "type": "known", "question": "How do I transfer money between my RBC accounts?", "answer": "You can transfer money between your RBC accounts using RBC Online Banking or the RBC Mobile app."}
+{"id": "k20", "type": "known", "question": "How can I view my RBC account balance?", "answer": "You can view your RBC account balance using RBC Online Banking or the RBC Mobile app."}
+
+{"id": "u01", "type": "unknown", "question": "How do I open a chequing account with TD Bank?", "answer": null}
+{"id": "u02", "type": "unknown", "question": "What are the Scotiabank student account fees?", "answer": null}
+{"id": "u03", "type": "unknown", "question": "Does CIBC offer cryptocurrency trading?", "answer": null}
+{"id": "u04", "type": "unknown", "question": "What is the interest rate on a Bank of America Rewards card?", "answer": null}
+{"id": "u05", "type": "unknown", "question": "How can I close my Chase Sapphire credit card?", "answer": null}
+{"id": "u06", "type": "unknown", "question": "How do I apply for a Wells Fargo auto loan?", "answer": null}
+{"id": "u07", "type": "unknown", "question": "What are the hours for the branch inside Walmart?", "answer": null}
+{"id": "u08", "type": "unknown", "question": "What is the weather in Toronto today?", "answer": null}
+{"id": "u09", "type": "unknown", "question": "Can I use my RBC debit card on Mars?", "answer": null}
+{"id": "u10", "type": "unknown", "question": "How do I get a refund for a Steam purchase?", "answer": null}
