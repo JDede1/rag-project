@@ -1,92 +1,116 @@
 """
-search_engine.py
+search_engine.py — Phase 6 Enhanced Retriever
 -------------------------------------------------------
-FAISS-based semantic retriever for chunked RBC FAQ data.
-
-Corrected Version (Stable):
-    • Uses SAME embedding model as Phase 3 → MPNet (768-D)
-    • Loads FAISS + metadata from /data/index/
-    • Computes MPNet embeddings for queries
-    • Normalizes vectors for cosine similarity
-    • Returns JSON-safe structured dicts with provenance
+Adds:
+    • Stage-2 heuristic re-ranking
+    • Query–chunk keyword scoring
+    • Citation IDs for generator.py
+    • Confidence scoring for main.py fallback
 """
 
 import faiss
 import numpy as np
 import pandas as pd
+import re
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
+
+
+# ---------------------------------------------------------
+# Utility: Simple keyword tokenizer
+# ---------------------------------------------------------
+def _tokenize(text: str):
+    if not text:
+        return []
+    return re.findall(r"\w+", text.lower())
+
+
+QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "can"}
 
 
 class RbcRetriever:
     def __init__(self):
         """Load FAISS index, metadata, and MPNet embedding model."""
 
-        # Phase 3 directory structure
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
-        # IMPORTANT: Must match Phase 3 embeddings EXACTLY
+        # IMPORTANT: must match Phase 3 exactly
         self.model_name = "sentence-transformers/all-mpnet-base-v2"
 
-        # Load FAISS + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
-        # Load MPNet (Phase 3 embedding model)
         self.model = SentenceTransformer(self.model_name)
 
-        print(f"Loaded FAISS index with {self.index.ntotal} vectors")
-        print(f"Loaded metadata rows: {len(self.metadata)}")
-        print(f"Retriever model: {self.model_name}")
+        print(f"[Retriever] Loaded FAISS index with {self.index.ntotal} vectors")
+        print(f"[Retriever] Loaded metadata rows: {len(self.metadata)}")
+        print(f"[Retriever] Embedding model: {self.model_name}")
 
     # ---------------------------------------------------------
-    # Encode query using MPNet
+    # Encode query
     # ---------------------------------------------------------
     def embed_query(self, text: str):
-        """Generate MPNet embedding for a single query string."""
         return self.model.encode(
             [text],
             convert_to_numpy=True,
-            normalize_embeddings=False  # We'll normalize manually
+            normalize_embeddings=False
         )
 
     # ---------------------------------------------------------
-    # Search
+    # Stage-2 Reranking (Heuristic)
+    # ---------------------------------------------------------
+    def _rerank(self, query: str, results: list):
+        """
+        Lightweight reranking:
+            • FAISS cosine score (base)
+            • Keyword overlap
+            • Question-word presence
+        """
+
+        q_tokens = set(_tokenize(query))
+        question_overlap = q_tokens & QUESTION_WORDS
+
+        reranked = []
+        for i, r in enumerate(results):
+            chunk_tokens = set(_tokenize(r["chunk"]))
+
+            # Score components
+            overlap = len(q_tokens & chunk_tokens)
+            base = r["score"]
+            qword_boost = 2 if question_overlap else 1
+
+            final_score = base + 0.02 * overlap * qword_boost
+
+            r["final_score"] = float(final_score)
+            r["citation_id"] = i + 1  # sequential, stable ordering
+
+            reranked.append(r)
+
+        return sorted(reranked, key=lambda x: x["final_score"], reverse=True)
+
+    # ---------------------------------------------------------
+    # Main Search
     # ---------------------------------------------------------
     def search(self, query: str, top_k: int = 5):
-        """
-        Perform semantic retrieval.
-
-        Returns list of dicts:
-            - question
-            - chunk
-            - score
-            - url
-            - source
-            - retrieved_at
-            - source_faq_index
-        """
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Encode query
+        # Step 1 — encode
         query_emb = self.embed_query(query)
-
-        # Normalize for cosine similarity
         faiss.normalize_L2(query_emb)
 
-        # Retrieve nearest neighbors
+        # Step 2 — FAISS search
         distances, indices = self.index.search(query_emb, top_k)
 
-        results = []
+        raw_results = []
         for score, idx in zip(distances[0], indices[0]):
             row = self.metadata.iloc[idx]
 
-            entry = {
+            raw_results.append({
                 "question": row.get("question", ""),
                 "chunk": row.get("chunk", ""),
                 "score": float(score),
@@ -94,24 +118,35 @@ class RbcRetriever:
                 "source": row.get("source", None),
                 "retrieved_at": row.get("retrieved_at", None),
                 "source_faq_index": int(row.get("source_faq_index", -1)),
-            }
+            })
 
-            results.append(entry)
+        # Step 3 — Stage-2 reranking
+        reranked = self._rerank(query, raw_results)
 
-        # Sort results by descending similarity score
-        return sorted(results, key=lambda r: r["score"], reverse=True)
+        # Step 4 — Confidence scoring (avg of top 2 final scores)
+        if len(reranked) >= 2:
+            top_two = reranked[:2]
+            avg = (top_two[0]["final_score"] + top_two[1]["final_score"]) / 2
+        else:
+            avg = reranked[0]["final_score"] if reranked else 0.0
+
+        for r in reranked:
+            r["confidence"] = float(avg)  # identical for whole group
+
+        return reranked
 
     # ---------------------------------------------------------
-    # Developer pretty-print helper
+    # Pretty Printer (unchanged)
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
         print(f"\nQuery: {query}\n")
         for i, r in enumerate(results, start=1):
-            print(f"{i}. ({r['score']:.4f}) {r['question']}")
+            print(f"{i}. ({r['final_score']:.4f}) {r['question']}")
             print(f"   Chunk: {r['chunk'][:160]}...")
             if r["url"]:
                 print(f"   URL: {r['url']}")
+            print(f"   CIT: {r['citation_id']}")
             print("")
 
 
