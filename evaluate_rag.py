@@ -1,23 +1,23 @@
 """
 evaluate_rag.py
 ---------------------------------------------------------
-Phase 5: Automated Evaluation for RAG Pipeline
+Automated Evaluation for RAG Pipeline
 
-This script:
-    • Loads RbcRetriever (FAISS + metadata)
-    • Loads generate_answer() (Phi-3.5 grounded generator)
-    • Mirrors FastAPI /ask logic exactly:
-        - retriever.search()
-        - clean_retrieval()
-        - generate_answer()
-    • Computes hallucination / grounding metrics
-    • Saves detailed per-question results
-    • Prints an evaluation summary
+This version:
+    • Loads RbcRetriever + Phi-3.5 generator
+    • Mirrors FastAPI /ask logic exactly
+    • Uses the new Balanced grounding logic:
+          from src.generation.generator import is_grounded
+    • Evaluates:
+          - known questions (should give grounded answer)
+          - unknown questions (should answer "I don't know.")
+    • Saves detailed per-question logs
+    • Prints hallucination summary
 
 Run:
     python evaluate_rag.py \
         --eval-file data/eval/rbc_eval_set.jsonl \
-        --output-file data/eval/results.jsonl \
+        --output-file data/eval/rbc_eval_results.jsonl \
         --top-k 5
 """
 
@@ -26,18 +26,16 @@ import argparse
 from pathlib import Path
 from typing import List, Dict
 
-import numpy as np
-
-# Import project modules
+# Project modules
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer
+from src.generation.generator import generate_answer, is_grounded
 
 
 # ---------------------------------------------------------
-# CLEAN RETRIEVAL (copy from main.py)
+# CLEAN RETRIEVAL  (copy of FastAPI main.py)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.40, max_items: int = 4):
-    """Identical to FastAPI clean_retrieval() logic."""
+    """Same logic as FastAPI clean_retrieval()."""
     if not results:
         return []
 
@@ -58,17 +56,15 @@ def clean_retrieval(results: list, score_threshold: float = 0.40, max_items: int
 
 
 # ---------------------------------------------------------
-# METRIC UTILITIES
+# TOKENIZATION UTILS (kept for metrics)
 # ---------------------------------------------------------
 def tokenize(text: str) -> List[str]:
-    """Simple tokenization."""
     if not text:
         return []
     return text.lower().replace("\n", " ").split()
 
 
 def jaccard(a: List[str], b: List[str]):
-    """Jaccard similarity between token lists."""
     A, B = set(a), set(b)
     if not A or not B:
         return 0.0
@@ -76,12 +72,12 @@ def jaccard(a: List[str], b: List[str]):
 
 
 # ---------------------------------------------------------
-# EVALUATE SINGLE EXAMPLE
+# EVALUATE ONE QUESTION
 # ---------------------------------------------------------
 def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     q_id = example.get("id")
     question = example.get("question")
-    gold_answer = example.get("answer")  # may be None for unknown
+    gold_answer = example.get("answer")  # None for unknown
     q_type = example.get("type", "unknown")
 
     # ---- 1. RETRIEVAL ----
@@ -89,28 +85,30 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     clean_chunks = clean_retrieval(retrieved)
 
     # ---- 2. GENERATION ----
-    answer = generate_answer(question, clean_chunks)
+    rag_answer = generate_answer(question, clean_chunks)
 
-    # ---- 3. METRICS ----
+    # ---- 3. METRICS (for debugging, not for decision)
     gold_tokens = tokenize(gold_answer) if gold_answer else []
-    ans_tokens = tokenize(answer)
+    ans_tokens = tokenize(rag_answer)
     ctx_tokens = tokenize(" ".join(clean_chunks))
 
     context_overlap = jaccard(gold_tokens, ctx_tokens) if gold_tokens else 0.0
     grounding_score = jaccard(ans_tokens, ctx_tokens) if ans_tokens else 0.0
 
-    # ---- 4. HALLUCINATION LOGIC ----
+    # ---- 4. FINAL HALLUCINATION DECISION ----
     if q_type == "unknown":
-        hallucinated = answer.lower() != "i don't know."
-    else:  # known
-        hallucinated = (grounding_score < 0.3)
+        # unknown should say "I don't know."
+        hallucinated = rag_answer.lower().strip() != "i don't know."
+    else:
+        # known → check grounding using the new shared logic
+        hallucinated = not is_grounded(rag_answer, clean_chunks)
 
     return {
         "id": q_id,
-        "question": question,
         "type": q_type,
+        "question": question,
         "gold_answer": gold_answer,
-        "rag_answer": answer,
+        "rag_answer": rag_answer,
         "retrieved": retrieved,
         "used_chunks": clean_chunks,
         "context_overlap": context_overlap,
@@ -127,7 +125,7 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
     retriever = RbcRetriever()
     print("Components loaded.\n")
 
-    # Load evaluation dataset
+    # Load eval set
     examples = []
     with open(eval_file, "r") as f:
         for line in f:
@@ -137,8 +135,7 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
 
     results = []
     for ex in examples:
-        res = evaluate_one(ex, retriever, top_k)
-        results.append(res)
+        results.append(evaluate_one(ex, retriever, top_k))
 
     # Save results
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +143,7 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
         for r in results:
             f.write(json.dumps(r) + "\n")
 
-    # Summary stats
+    # ---- Summary ----
     known = [r for r in results if r["type"] == "known"]
     unknown = [r for r in results if r["type"] == "unknown"]
 
@@ -154,13 +151,13 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
     unknown_hall = sum(r["hallucinated"] for r in unknown)
 
     print("=== Evaluation Summary ===")
-    print(f"Total:   {len(results)}")
-    print(f"Known:   {len(known)}")
-    print(f"Unknown: {len(unknown)}")
-    print("")
+    print(f"Total questions:      {len(results)}")
+    print(f"Known questions:      {len(known)}")
+    print(f"Unknown questions:    {len(unknown)}\n")
+
     print(f"Known hallucinations:   {known_hall} / {len(known)}")
-    print(f"Unknown hallucinations: {unknown_hall} / {len(unknown)}")
-    print("")
+    print(f"Unknown hallucinations: {unknown_hall} / {len(unknown)}\n")
+
     print(f"Results saved to: {output_file}")
 
     return results
