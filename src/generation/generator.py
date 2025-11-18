@@ -218,7 +218,7 @@ def generate_answer(question: str, chunks: List[str]) -> str:
         output_ids = model.generate(
             **encoded,
             max_new_tokens=130,
-            temperature=0.0,
+            temperature=None,
             top_p=1.0,
             do_sample=False,
             repetition_penalty=1.05,
@@ -244,3 +244,4 @@ if __name__ == "__main__":
     ]
     q = "How do I report a lost credit card?"
     print("Answer:", generate_answer(q, sample_chunks))
+
