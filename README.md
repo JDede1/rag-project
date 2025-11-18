@@ -251,37 +251,33 @@ Connected using a **Cloudflare tunnel** for secure public access.
 ```mermaid
 flowchart TD
 
-    %% USER → BACKEND
-    A[User / Streamlit UI] --> B[/FastAPI Backend ( /ask )/]
+    A[User Streamlit UI] --> B[FastAPI Backend ask endpoint]
 
-    %% RETRIEVAL
     B --> C[RbcRetriever]
-    C --> C1(MPNet Encoder)
-    C --> C2(FAISS Index)
-    C --> C3(Metadata Store)
-    C -->|top-k chunks| D
+    C --> C1[MPNet Encoder]
+    C --> C2[FAISS Index]
+    C --> C3[Metadata Store]
+    C -->|top k chunks| D
 
-    %% GENERATION
-    D[Strict Grounded Generator] --> D1(Phi-3.5-mini LLM)
-    D --> D2(Strict Prompt Builder)
-    D --> D3(Answer Extractor + Hybrid Grounding)
+    D[Strict Grounded Generator] --> D1[Phi 3.5 mini LLM]
+    D --> D2[Strict Prompt Builder]
+    D --> D3[Answer Extractor and Hybrid Grounding]
     D --> E
 
-    %% RETURN TO USER
     E[Final Grounded Answer] --> A
 
-    %% OFFLINE PIPELINES
     subgraph OFFLINE[Offline Pipelines]
         direction TB
-        P1[PHASE 1: Scraper Pipeline]
-        P2[PHASE 2: Preprocessing]
-        P3[PHASE 3: Embeddings + FAISS]
-        P5[PHASE 5: Evaluation]
+        P1[PHASE 1 Scraper Pipeline]
+        P2[PHASE 2 Preprocessing]
+        P3[PHASE 3 Embeddings and FAISS]
+        P5[PHASE 5 Evaluation]
     end
 
     P1 --> P2 --> P3 --> P5
     P3 --> C
 ```
+
 
 ---
 
@@ -1508,5 +1504,6 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
