@@ -1,11 +1,11 @@
 """
-chat_ui.py — Premium Fintech UI for RAG System
+chat_ui.py — Phase 6 Enhanced UI for RAG System
 ------------------------------------------------------------
-Clean version with:
-    - External style.css only (no inline CSS conflicts)
-    - Modern fintech UI
-    - Full backend compatibility with FastAPI/ngrok
-    - Stable Streamlit chat rendering
+Adds:
+    • Structured answer rendering
+    • Citations panel
+    • Confidence display
+    • Clean formatting for multi-section answers
 """
 
 import streamlit as st
@@ -48,7 +48,7 @@ st.set_page_config(
 
 
 # ============================================================
-# Load External CSS Only (Final Version)
+# Load External CSS Only
 # ============================================================
 CSS_PATH = "src/frontend/static/style.css"
 
@@ -58,7 +58,7 @@ def load_css(path):
             with open(path, "r") as f:
                 st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
         except:
-            pass  # Silent fail for safety
+            pass  # Silent fail
 
 load_css(CSS_PATH)
 
@@ -78,7 +78,7 @@ st.markdown("""
 # Session State Setup
 # ============================================================
 if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+    st.session_state["messages"] = []  # (role, text, citations)
 
 if "retrieved_docs" not in st.session_state:
     st.session_state["retrieved_docs"] = []
@@ -88,11 +88,27 @@ if "waiting" not in st.session_state:
 
 
 # ============================================================
-# Render Chat History
+# Render Chat History (Phase 6 formatting)
 # ============================================================
-for role, text in st.session_state["messages"]:
+def render_answer_block(text: str, citations: list):
+    """
+    Render the structured answer returned by Phase 6 generator.py.
+    """
+
+    st.markdown(text)
+
+    if citations:
+        st.markdown("### 📎 Citations Used")
+        cit_text = ", ".join(f"[CIT:{cid}]" for cid in citations)
+        st.markdown(f"**{cit_text}**")
+
+
+for role, text, citations in st.session_state["messages"]:
     with st.chat_message(role):
-        st.markdown(text)
+        if role == "assistant":
+            render_answer_block(text, citations)
+        else:
+            st.markdown(text)
 
 
 # ============================================================
@@ -102,13 +118,11 @@ user_prompt = st.chat_input("Ask any banking-related question...")
 
 if user_prompt and not st.session_state["waiting"]:
 
-    # Add user message
-    st.session_state["messages"].append(("user", user_prompt))
+    st.session_state["messages"].append(("user", user_prompt, []))
 
     with st.chat_message("user"):
         st.markdown(user_prompt)
 
-    # Placeholder for assistant typing
     placeholder = st.chat_message("assistant")
     placeholder.markdown("<span class='typing'>Thinking...</span>", unsafe_allow_html=True)
 
@@ -125,16 +139,22 @@ if user_prompt and not st.session_state["waiting"]:
 
         answer = data.get("answer", "No answer returned.")
         retrieved_docs = data.get("retrieved", [])
+        citations_used = data.get("citations_used", [])
+        confidence = data.get("confidence", 0.0)
 
     except Exception as e:
         answer = f"Backend connection error: {e}"
         retrieved_docs = []
+        citations_used = []
+        confidence = 0.0
 
-    # Replace placeholder
-    placeholder.markdown(answer)
+    # Replace placeholder with structured answer
+    with placeholder:
+        render_answer_block(answer, citations_used)
+        st.caption(f"🔒 Confidence: {confidence:.3f}")
 
-    # Update state
-    st.session_state["messages"].append(("assistant", answer))
+    # Update session state
+    st.session_state["messages"].append(("assistant", answer, citations_used))
     st.session_state["retrieved_docs"] = retrieved_docs
     st.session_state["waiting"] = False
 
@@ -158,15 +178,15 @@ if retrieved:
             unsafe_allow_html=True
         )
 
-        score = float(doc.get("score", 0))
-        bar_width = max(5, int(score * 100))
+        final_score = float(doc.get("final_score", doc.get("score", 0)))
+        bar_width = max(5, int(final_score * 100))
 
         st.sidebar.markdown(
             f"<div class='score-bar' style='width:{bar_width}%;'></div>",
             unsafe_allow_html=True
         )
 
-        st.sidebar.caption(f"Match Score: {score:.3f}")
+        st.sidebar.caption(f"Score: {final_score:.3f} | CIT:{doc.get('citation_id', '?')}")
 
         if doc.get("url"):
             st.sidebar.markdown(f"[Source Link]({doc['url']})")
