@@ -1,42 +1,63 @@
-# ===========================
-# RAG PROJECT - GITIGNORE
+# =======================================
+# RAG PROJECT - SAFE .gitignore
 # JDede1 / rag-project
-# ===========================
+# =======================================
 
-# ---- DATA & INDEX FILES (DO NOT PUSH) ----
+# =======================================
+# DATA (NEVER PUSH LARGE FILES)
+# =======================================
 data/index/
-data/raw/
 data/processed/
+data/raw/
 data/reports/
-data/eval/
 
-# Remove Drive symlink if it reappears
+# IMPORTANT: evaluation files SHOULD be included
+# so do NOT ignore data/eval/
+# data/eval/    <-- DO NOT ADD THIS
+
+# Ignore Google Drive symlink if recreated
 data -> /content/drive/MyDrive/rag_project_data
 
-# ---- LOGS ----
+# =======================================
+# LOGS AND TUNNEL FILES
+# =======================================
 *.log
 logs/
 cf_tunnel.log
 rag_llm_url.txt
 
-# ---- PYTHON CACHE ----
+# =======================================
+# PYTHON CACHE
+# =======================================
 __pycache__/
 *.pyc
 *.pyo
 
-# ---- MODEL CACHE (HuggingFace) ----
+# =======================================
+# MODEL WEIGHTS (HUGE)
+# =======================================
+*.bin
+*.safetensors
+*.pt
+
+# HuggingFace cache
 models/
 huggingface/
 .cache/
 .env/
 
-# ---- EDITOR / ENVIRONMENT FILES ----
+# =======================================
+# EDITOR / SYSTEM FILES
+# =======================================
 .vscode/
 .DS_Store
 
-# ---- COLAB CHECKPOINTS ----
+# =======================================
+# COLAB CHECKPOINTS
+# =======================================
 .ipynb_checkpoints/
 
-# ---- STREAMLIT INTERNAL CACHE ----
-frontend/__pycache__/
-api/__pycache__/
+# =======================================
+# STREAMLIT / API INTERNAL CACHES
+# =======================================
+src/**/__pycache__/
