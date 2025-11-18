@@ -248,20 +248,92 @@ It consists of two independent services:
 
 Connected using a **Cloudflare tunnel** for secure public access.
 
+```mermaid
+flowchart TD
+
+    %% STYLE
+    classDef box fill=#0e1e2e,stroke=#4fa3ff,stroke-width=1px,color=#ffffff;
+    classDef small fill=#112233,stroke=#4fa3ff,stroke-width=1px,color=#ffffff,font-size=12px;
+
+    %% USER LAYER
+    A[User<br/>Streamlit Web UI<br/>(Cloudflare Tunnel)]:::box
+
+    %% BACKEND ENTRY
+    A --> B[/FastAPI Backend<br/>/ask endpoint/]:::box
+
+    %% RETRIEVAL LAYER
+    B --> C[RbcRetriever<br/>src/retrieval/search_engine.py]:::box
+    C --> C1((MPNet<br/>Encoder)):::small
+    C --> C2[(FAISS<br/>Cosine Index)]:::small
+    C --> C3[(Metadata Store<br/>Parquet)]:::small
+    C -->|top-k chunks| D
+
+    %% GENERATION LAYER
+    D[Strict Grounded Generator<br/>src/generation/generator.py]:::box
+    D --> D1((Phi-3.5-mini<br/>PyTorch LLM)):::small
+    D --> D2{{Strict Prompt Builder}}:::small
+    D --> D3{{Answer Extractor<br/>+ Hybrid Grounding}}:::small
+    D --> E
+
+    %% RETURN
+    E[Final Grounded Answer]:::box --> A
+
+    %% -----------------------------------------------------
+    %% OFFLINE PIPELINES (LEFT SIDE)
+    %% -----------------------------------------------------
+
+    subgraph OFFLINE[Offline Pipelines (Before Deployment)]
+        direction TB
+
+        P1[PHASE 1<br/>Scraper Pipeline<br/>Playwright → Raw JSON]:::box
+        P2[PHASE 2<br/>Preprocessing<br/>Clean → Normalize → Split → Chunk]:::box
+        P3[PHASE 3<br/>Embeddings + FAISS<br/>MPNet → embeddings.npy → faiss.index]:::box
+        P5[PHASE 5<br/>Evaluation<br/>evaluate_rag.py]:::box
+    end
+
+    P1 --> P2 --> P3 --> P5
+    P3 --> C
+```
+
 ---
 
 ## 🔹 **High-Level System Overview**
 
-### **User → UI → Backend → Retriever → Generator → UI**
+### **User → Streamlit UI → FastAPI /ask → FAISS Retriever → Phi-3.5 Generator → UI**
 
 ```mermaid
-flowchart TB
-    U["User<br>Browser"] --> UI["Streamlit UI<br>(Chat Interface)"]
-    UI -->|HTTP GET /ask| API["FastAPI Backend<br>RAG Pipeline"]
-    API -->|Top-K Search| RET["FAISS Retriever<br>(MiniLM Embeddings)"]
-    RET --> API
-    API -->|Context + Prompt| GEN["Phi-3 Mini<br>Grounded Generator"]
-    GEN --> API --> UI --> U
+flowchart TD
+
+    classDef box fill=#0e1e2e,stroke=#4fa3ff,stroke-width=1px,color=#ffffff;
+    classDef small fill=#112233,stroke=#4fa3ff,stroke-width=1px,color=#ffffff,font-size=12px;
+
+    A[User<br/>Streamlit Web UI<br/>(Cloudflare Tunnel)]:::box
+    A --> B[/FastAPI Backend<br/>/ask endpoint/]:::box
+
+    B --> C[RbcRetriever<br/>src/retrieval/search_engine.py]:::box
+    C --> C1((MPNet<br/>Encoder)):::small
+    C --> C2[(FAISS<br/>Cosine Index)]:::small
+    C --> C3[(Metadata Store<br/>Parquet)]:::small
+    C -->|top-k chunks| D
+
+    D[Strict Grounded Generator<br/>src/generation/generator.py]:::box
+    D --> D1((Phi-3.5-mini<br/>PyTorch LLM)):::small
+    D --> D2{{Strict Prompt Builder}}:::small
+    D --> D3{{Answer Extractor<br/>+ Hybrid Grounding}}:::small
+    D --> E
+
+    E[Final Grounded Answer]:::box --> A
+
+    subgraph OFFLINE[Offline Pipelines (Before Deployment)]
+        direction TB
+        P1[PHASE 1<br/>Scraper Pipeline]:::box
+        P2[PHASE 2<br/>Preprocessing]:::box
+        P3[PHASE 3<br/>Embeddings + FAISS]:::box
+        P5[PHASE 5<br/>Evaluation]:::box
+    end
+
+    P1 --> P2 --> P3 --> P5
+    P3 --> C
 ```
 
 ---
@@ -1453,3 +1525,4 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
