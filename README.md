@@ -250,10 +250,10 @@ Connected using a **Cloudflare tunnel** for secure public access.
 
 ```mermaid
 flowchart TD
-    User[User / Browser]
+    User[User Browser]
     Streamlit[Streamlit UI]
     FastAPI[FastAPI Backend]
-    Retriever[RbcRetriever (FAISS)]
+    Retriever[RbcRetriever FAISS]
     Generator[Answer Generator]
     LLM[Phi-3 Mini LLM]
     Offline[Offline Pipeline]
@@ -263,6 +263,7 @@ flowchart TD
 
     Offline --> Retriever
 ```
+
 
 ---
 
@@ -1491,6 +1492,7 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
 
