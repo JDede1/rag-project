@@ -250,37 +250,18 @@ Connected using a **Cloudflare tunnel** for secure public access.
 
 ```mermaid
 flowchart TD
+    User[User / Browser]
+    Streamlit[Streamlit UI]
+    FastAPI[FastAPI Backend]
+    Retriever[RbcRetriever (FAISS)]
+    Generator[Answer Generator]
+    LLM[Phi-3 Mini LLM]
+    Offline[Offline Pipeline]
 
-    %% USER INTERACTION
-    User[User / Browser] --> Streamlit
+    User --> Streamlit --> FastAPI --> Retriever --> Generator --> LLM
+    LLM --> Generator --> User
 
-    %% FRONTEND
-    Streamlit[Streamlit UI (Cloudflare Tunnel)] --> FastAPI
-
-    %% BACKEND API
-    FastAPI[FastAPI Backend (/ask Endpoint)] --> Retriever
-
-    %% RETRIEVAL
-    Retriever[RbcRetriever (FAISS + Metadata)] -->|Top-k Chunks| Generator
-
-    %% GENERATION
-    Generator[Grounded Answer Generator] --> LLM
-    LLM[Phi-3.5-mini (PyTorch)] --> Generator
-
-    %% RESPONSE
-    Generator --> FinalAnswer[Final Answer] --> User
-
-    %% OFFLINE PIPELINE
-    subgraph OfflinePipelines[Offline Build-Time Pipelines]
-        direction TB
-        Scraper[Phase 1: Scraper]
-        Preprocess[Phase 2: Preprocessing]
-        Embeddings[Phase 3: Embeddings + FAISS]
-        Eval[Phase 5: Evaluation]
-    end
-
-    Scraper --> Preprocess --> Embeddings --> Eval
-    Embeddings --> Retriever
+    Offline --> Retriever
 ```
 
 ---
@@ -291,50 +272,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+    User[User]
+    UI[Streamlit UI]
+    API[FastAPI /ask Endpoint]
+    RET[FAISS Retriever]
+    GEN[Grounded Generator]
+    LLM[Phi-3 Mini]
 
-    %% ================================
-    %% USER INTERFACE
-    %% ================================
-    A[User - Streamlit Web UI (Cloudflare Tunnel)]
-    A --> B[/FastAPI Backend - /ask Endpoint via Ngrok/]
-
-    %% ================================
-    %% RETRIEVAL FLOW
-    %% ================================
-    B --> C[RbcRetriever - search_engine.py]
-    C --> C1(MPNet Encoder)
-    C --> C2(FAISS Index)
-    C --> C3(Metadata Store)
-    C -->|Top-K Chunks| D
-
-    %% ================================
-    %% GENERATION FLOW
-    %% ================================
-    D[Strict Grounded Generator - generator.py]
-    D --> D1(Phi-3.5-Mini PyTorch LLM)
-    D --> D2(Prompt Builder)
-    D --> D3(Answer Extractor + Hybrid Grounding)
-    D --> E
-
-    %% ================================
-    %% RETURN TO USER
-    %% ================================
-    E[Final Grounded Answer]
-    E --> A
-
-    %% ================================
-    %% OFFLINE PIPELINES
-    %% ================================
-    subgraph OFFLINE[Offline Pipelines - Build Stages]
-        direction TB
-        P1[PHASE 1 — Scraper (Playwright → Raw JSON)]
-        P2[PHASE 2 — Preprocessing (Clean → Normalize → Split → Chunk)]
-        P3[PHASE 3 — Embeddings + FAISS (embeddings.npy + faiss.index)]
-        P5[PHASE 5 — Evaluation (evaluate_rag.py)]
-    end
-
-    P1 --> P2 --> P3 --> P5
-    P3 --> C
+    User --> UI --> API --> RET --> GEN --> LLM
+    LLM --> GEN --> UI
 ```
 
 ---
@@ -1545,6 +1491,7 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
 
