@@ -1,15 +1,19 @@
 """
-search_engine.py — Phase 6 Enhanced Retriever
+search_engine.py — Phase 7 Stable Retriever
 -------------------------------------------------------
-Adds:
-    • Stage-2 heuristic re-ranking
-    • Query–chunk keyword scoring
+Phase 6 Provided:
+    • Stage-2 heuristic reranking
+    • Keyword overlap scoring
     • Citation IDs for generator.py
     • Confidence scoring for main.py fallback
 
-Phase 7.2 Ready:
-    • Retrieval metadata fields remain unchanged
-    • Safe to use for monitoring (grounding_score, context_overlap added later in main.py)
+Phase 7:
+    • No structural changes required
+    • Retrieval output remains fully compatible with:
+        - Phase 7 logging (rag_logger.py)
+        - Phase 7 generator (grounding_details)
+        - Phase 7 main.py monitoring fields
+    • This file is now the stable production version
 """
 
 import faiss
@@ -21,7 +25,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # ---------------------------------------------------------
-# Utility: Simple keyword tokenizer
+# Utility: Simple tokenizer for keyword overlap
 # ---------------------------------------------------------
 def _tokenize(text: str):
     if not text:
@@ -36,17 +40,16 @@ class RbcRetriever:
     def __init__(self):
         """Load FAISS index, metadata, and MPNet embedding model."""
 
-        # Phase 3 folder layout
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
-        # Must match Phase 3 exactly
+        # MUST match Phase 3 embeddings exactly
         self.model_name = "sentence-transformers/all-mpnet-base-v2"
 
-        # Load FAISS + metadata
+        # Load FAISS and metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
@@ -68,14 +71,15 @@ class RbcRetriever:
         )
 
     # ---------------------------------------------------------
-    # Stage-2 Reranking (Heuristic)
+    # Stage-2 Reranking
     # ---------------------------------------------------------
     def _rerank(self, query: str, results: list):
         """
         Lightweight reranking:
-            • FAISS cosine score (base)
-            • Keyword overlap
-            • Question-word presence
+            - base FAISS cosine score
+            - keyword overlap
+            - question-word boost
+            - citation IDs added for generator
         """
 
         q_tokens = set(_tokenize(query))
@@ -84,16 +88,15 @@ class RbcRetriever:
         reranked = []
         for i, r in enumerate(results):
             chunk_tokens = set(_tokenize(r["chunk"]))
-
-            # Score components
             overlap = len(q_tokens & chunk_tokens)
+
             base = r["score"]
             qword_boost = 2 if question_overlap else 1
 
             final_score = base + 0.02 * overlap * qword_boost
 
             r["final_score"] = float(final_score)
-            r["citation_id"] = i + 1  # stable sequential IDs for generator
+            r["citation_id"] = i + 1
 
             reranked.append(r)
 
@@ -106,11 +109,11 @@ class RbcRetriever:
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Step 1 — encode
+        # Encode query
         query_emb = self.embed_query(query)
         faiss.normalize_L2(query_emb)
 
-        # Step 2 — FAISS search
+        # FAISS search
         distances, indices = self.index.search(query_emb, top_k)
 
         raw_results = []
@@ -127,10 +130,10 @@ class RbcRetriever:
                 "source_faq_index": int(row.get("source_faq_index", -1)),
             })
 
-        # Step 3 — Stage-2 reranking
+        # Rerank
         reranked = self._rerank(query, raw_results)
 
-        # Step 4 — Confidence scoring (shared for entire retrieved set)
+        # Confidence = avg of top 2 final_scores
         if len(reranked) >= 2:
             top_two = reranked[:2]
             avg = (top_two[0]["final_score"] + top_two[1]["final_score"]) / 2
@@ -140,12 +143,12 @@ class RbcRetriever:
         avg = float(avg)
 
         for r in reranked:
-            r["confidence"] = avg  # stable confidence for the group
+            r["confidence"] = avg
 
         return reranked
 
     # ---------------------------------------------------------
-    # Pretty Printer (unchanged)
+    # Pretty Printer (Developer Debug Tool)
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
@@ -157,7 +160,7 @@ class RbcRetriever:
                 print(f"   URL: {r['url']}")
             print(f"   CIT: {r['citation_id']}")
             print("")
-
+            
 
 if __name__ == "__main__":
     retriever = RbcRetriever()
