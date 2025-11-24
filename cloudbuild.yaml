@@ -1,0 +1,12 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "$_AR_IMAGE",
+        "."
+      ]
+
+images:
+  - "$_AR_IMAGE"
