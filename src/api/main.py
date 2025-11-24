@@ -1,15 +1,16 @@
 """
 main.py — FastAPI Backend for RAG
 -------------------------------------------------------
-Adds:
+Phase 7 Final:
     • JSONL request logging (monitoring/rag_logger.py)
     • Latency measurement
+    • Grounding metrics from generator.grounding_details()
     • 100% compatible with Phase 6 retrieval + generator
 """
 
 import sys
 import os
-import time   # ← NEW
+import time
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -21,10 +22,10 @@ import uvicorn
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer
+from src.generation.generator import generate_answer, grounding_details
 
 # Logging utility
-from monitoring.rag_logger import log_rag_event   # ← NEW
+from monitoring.rag_logger import log_rag_event
 
 
 # ---------------------------------------------------------
@@ -32,8 +33,8 @@ from monitoring.rag_logger import log_rag_event   # ← NEW
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Retrieval-Augmented Generation using FAISS + Phi-3.5-Mini (Phase 6 + Phase 7.1 Logging)",
-    version="7.1.0",
+    description="Retrieval-Augmented Generation using FAISS + Phi-3.5-Mini (Phase 7 Monitoring)",
+    version="7.0.0",
 )
 
 app.add_middleware(
@@ -67,7 +68,7 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# PHASE 6: Clean Retrieval for Generator
+# Clean Retrieval (from Phase 6)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     if not results:
@@ -77,7 +78,8 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 
     strong = [
         r for r in ordered
-        if r.get("final_score", 0.0) >= score_threshold and isinstance(r.get("chunk"), str)
+        if r.get("final_score", 0.0) >= score_threshold
+        and isinstance(r.get("chunk"), str)
     ]
 
     chunks = [r["chunk"].strip() for r in strong][:max_items]
@@ -107,39 +109,40 @@ def health():
         "status": "ok",
         "record_count": len(retriever.metadata),
         "retriever_model": retriever.model_name,
-        "generator_model": "Structured Grounded — Phi-3.5-Mini-Instruct (Phase 6)",
+        "generator_model": "Phi-3.5-Mini-Instruct (Phase 7)",
         "logging_enabled": True
     }
 
 
 # ---------------------------------------------------------
-# PHASE 6 + 7.1 — Main RAG Endpoint (with Logging)
+# PHASE 7 — Main RAG Endpoint (Monitoring + Grounding)
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
     query: str = Query(..., description="User's banking question"),
     top_k: int = Query(5, ge=1, le=10)
 ):
-    start_time = time.time()              # ← NEW
+    start_time = time.time()
 
     try:
         # Step 1 — retrieval
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # Step 2 — strong context
+        # Step 2 — filter strong matches
         clean_chunks, citation_ids = clean_retrieval(retrieval_results)
 
+        # If no strong chunks, fallback immediately
         if not clean_chunks:
-            latency_ms = (time.time() - start_time) * 1000.0     # ← NEW
+            latency_ms = (time.time() - start_time) * 1000.0
 
-            # Log the "no-answer" event
-            log_rag_event(                                         # ← NEW
+            log_rag_event(
                 query=query,
                 answer="I don't know.",
                 retrieved=retrieval_results,
                 used_chunks=[],
                 citations=[],
                 grounding_score=0.0,
+                context_overlap=0.0,
                 confidence=0.0,
                 latency_ms=latency_ms,
             )
@@ -151,32 +154,41 @@ def ask(
                 "retrieved": retrieval_results,
                 "used_context": [],
                 "confidence": 0.0,
+                "grounding_score": 0.0,
+                "context_overlap": 0.0,
             }
 
-        # Step 3 — generation
+        # Step 3 — generate answer
         answer = generate_answer(query, clean_chunks)
 
-        # Step 4 — confidence score
+        # Step 4 — grounding metrics from generator
+        grounding = grounding_details(answer, clean_chunks)
+        grounding_score = grounding["grounding_score"]
+        context_overlap = grounding["context_overlap"]
+
+        # Step 5 — model confidence (retriever-level)
         confidence = (
             retrieval_results[0].get("confidence", 0.0)
             if retrieval_results else 0.0
         )
 
-        # Compute latency
-        latency_ms = (time.time() - start_time) * 1000.0      # ← NEW
+        # Step 6 — latency
+        latency_ms = (time.time() - start_time) * 1000.0
 
-        # Log the event
-        log_rag_event(                                        # ← NEW
+        # Step 7 — Log everything
+        log_rag_event(
             query=query,
             answer=answer,
             retrieved=retrieval_results,
             used_chunks=clean_chunks,
             citations=citation_ids,
-            grounding_score=0.0,       # Phase 7.2 will fill this properly
+            grounding_score=grounding_score,
+            context_overlap=context_overlap,
             confidence=confidence,
             latency_ms=latency_ms,
         )
 
+        # Step 8 — return full results
         return {
             "query": query,
             "answer": answer,
@@ -184,19 +196,22 @@ def ask(
             "retrieved": retrieval_results,
             "used_context": clean_chunks,
             "confidence": confidence,
+            "grounding_score": grounding_score,
+            "context_overlap": context_overlap,
+            "latency_ms": latency_ms,
         }
 
     except Exception as e:
+        latency_ms = (time.time() - start_time) * 1000.0
 
-        latency_ms = (time.time() - start_time) * 1000.0     # ← NEW
-
-        log_rag_event(                                       # ← NEW
+        log_rag_event(
             query=query,
             answer="I don't know.",
             retrieved=[],
             used_chunks=[],
             citations=[],
             grounding_score=0.0,
+            context_overlap=0.0,
             confidence=0.0,
             latency_ms=latency_ms,
         )
@@ -209,6 +224,9 @@ def ask(
             "used_context": [],
             "retrieved": [],
             "confidence": 0.0,
+            "grounding_score": 0.0,
+            "context_overlap": 0.0,
+            "latency_ms": latency_ms,
         }
 
 
