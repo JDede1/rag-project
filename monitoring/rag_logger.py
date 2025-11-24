@@ -1,5 +1,4 @@
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -16,10 +15,11 @@ def log_rag_event(
     used_chunks: list,
     citations: list,
     grounding_score: float,
+    context_overlap: float,
     confidence: float,
     latency_ms: float,
 ):
-    """Append a single RAG event as JSONL."""
+    """Append a single RAG request/response event into a JSONL file."""
 
     record = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -28,6 +28,7 @@ def log_rag_event(
         "citations": citations,
         "confidence": confidence,
         "grounding_score": grounding_score,
+        "context_overlap": context_overlap,
         "latency_ms": latency_ms,
         "retrieved": retrieved,
         "used_chunks": used_chunks,
