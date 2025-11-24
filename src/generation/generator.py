@@ -1,45 +1,74 @@
 """
-generator.py — Grounded RAG Generator for Phi-3.5-Mini
+generator.py — Dual-Mode Grounded RAG Generator
 
-This module:
-    • Builds strict grounded prompts
-    • Generates structured answers with citations
-    • Detects contradictions and enforces safe fallback
-    • Computes grounding metrics (grounded flag, score, context token overlap)
-    • Returns a tuple: (answer: str, grounding_info: dict)
+Modes:
+    • Local: Phi-3.5-Mini-Instruct (Colab development)
+    • Groq:  External LLM via API (Cloud Run production)
+
+Environment Variables:
+    GEN_MODE = "local"  -> use Phi-3.5-mini-instruct
+    GEN_MODE = "groq"   -> use Groq API
+
+This module preserves ALL:
+    • Prompt structure
+    • Citation logic
+    • Contradiction detection
+    • Grounding checks
+    • Grounding metrics
+    • Deterministic generation behavior
 """
 
+import os
 import re
 from typing import List, Dict, Tuple
 
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+# Only import Groq client if needed
+GROQ_AVAILABLE = False
+if os.getenv("GEN_MODE", "local").lower() == "groq":
+    try:
+        from groq import Groq
+        GROQ_AVAILABLE = True
+    except ImportError:
+        pass
 
 
-# ---------------------------------------------------------
-# Model Setup
-# ---------------------------------------------------------
+# =========================================================
+# -------- LOCAL MODEL SETUP (Phi-3.5-mini) ---------------
+# =========================================================
 
-MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.float16 if torch.cuda.is_available() else torch.float32
+GEN_MODE = os.getenv("GEN_MODE", "local").lower()
+USE_LOCAL = GEN_MODE == "local"
 
-print(f"[Generator] Loading {MODEL_NAME} on {DEVICE}")
+if USE_LOCAL:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForCausalLM
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=DTYPE,
-    device_map="auto" if torch.cuda.is_available() else None,
-)
+    MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DTYPE = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    print(f"[Generator] Local mode: Loading {MODEL_NAME} on {DEVICE}")
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        torch_dtype=DTYPE,
+        device_map="auto" if torch.cuda.is_available() else None,
+    )
+
+else:
+    print("[Generator] Production mode: Using Groq API — No local model loaded.")
+    if not GROQ_AVAILABLE:
+        print("[Generator] ERROR: Groq library missing, generation will fail.")
+    GROQ_CLIENT = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+    GROQ_MODEL = "llama3-8b-8192"   # Fast and cheap; can be changed anytime
 
 
-# ---------------------------------------------------------
-# Utility Functions
-# ---------------------------------------------------------
+# =========================================================
+# -------- UTILITY FUNCTIONS (unchanged) ------------------
+# =========================================================
 
 def _attach_citations(chunks: List[str]) -> List[str]:
-    """Attach deterministic citation IDs to each text chunk."""
     tagged = []
     for i, chunk in enumerate(chunks):
         cid = f"[CIT:{i+1}]"
@@ -48,19 +77,17 @@ def _attach_citations(chunks: List[str]) -> List[str]:
 
 
 def _detect_contradiction(chunks: List[str]) -> bool:
-    """Simple heuristic for contradictions inside retrieved chunks."""
     text = " ".join(chunks).lower()
     if ("no fee" in text and "fee" in text and "no fee" not in text.split("fee")[0]):
         return True
     return False
 
 
-# ---------------------------------------------------------
-# Prompt Construction
-# ---------------------------------------------------------
+# =========================================================
+# -------- PROMPT CONSTRUCTION (unchanged) ----------------
+# =========================================================
 
 def build_prompt(question: str, chunks: List[str]) -> str:
-    """Construct a strict, grounded prompt with citation-tagged context."""
     if not chunks:
         context_text = "No context available."
     else:
@@ -86,16 +113,14 @@ def build_prompt(question: str, chunks: List[str]) -> str:
         f"Question: {question}\n"
         "Answer:"
     )
-
     return prompt
 
 
-# ---------------------------------------------------------
-# Output Extraction
-# ---------------------------------------------------------
+# =========================================================
+# -------- OUTPUT EXTRACTION (unchanged) ------------------
+# =========================================================
 
 def extract_answer(full_output: str) -> str:
-    """Extract the model’s answer while removing unwanted system echoes."""
     text = full_output.strip()
 
     if "Answer" in text:
@@ -118,9 +143,9 @@ def extract_answer(full_output: str) -> str:
     return text.strip()
 
 
-# ---------------------------------------------------------
-# Grounding Logic
-# ---------------------------------------------------------
+# =========================================================
+# -------- GROUNDING LOGIC (unchanged) --------------------
+# =========================================================
 
 _STOPWORDS = {
     "the", "is", "a", "to", "of", "and", "in",
@@ -133,14 +158,12 @@ _NUMBER_RE = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
 
 
 def _simple_tokens(text: str) -> List[str]:
-    """Tokenize while removing stopwords."""
     if not text:
         return []
     return [t for t in re.findall(r"\w+", text.lower()) if t not in _STOPWORDS]
 
 
 def is_grounded(answer: str, chunks: List[str]) -> bool:
-    """Checks whether the answer content can be verified inside retrieved chunks."""
     if not answer:
         return False
 
@@ -154,20 +177,16 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
 
     ctx_text = " ".join(chunks).lower()
 
-    # Direct substring
     base_ans = ans.rstrip(".").strip()
     if base_ans and base_ans in ctx_text:
         return True
 
-    # Phone numbers
     if set(_PHONE_RE.findall(ans)) & set(_PHONE_RE.findall(ctx_text)):
         return True
 
-    # Numbers
     if set(_NUMBER_RE.findall(ans)) & set(_NUMBER_RE.findall(ctx_text)):
         return True
 
-    # Token overlap
     ans_tokens = _simple_tokens(ans)
     ctx_tokens = set(_simple_tokens(ctx_text))
 
@@ -176,21 +195,14 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
 
 
 def hybrid_grounding(answer: str, chunks: List[str]) -> bool:
-    """Alias for compatibility."""
     return is_grounded(answer, chunks)
 
 
-# ---------------------------------------------------------
-# Grounding Metrics
-# ---------------------------------------------------------
+# =========================================================
+# -------- GROUNDING METRICS (unchanged) ------------------
+# =========================================================
 
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
-    """
-    Compute grounding metrics:
-        • grounded (bool)
-        • grounding_score (0–1)
-        • context_overlap (0–1)
-    """
     if not answer or not chunks:
         return {
             "grounded": False,
@@ -215,8 +227,6 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
     overlap_ratio = len(overlap) / max(1, len(ans_tokens))
 
     grounded_flag = is_grounded(answer, chunks)
-
-    # Weighted grounding score
     grounding_score = (0.7 * int(grounded_flag)) + (0.3 * overlap_ratio)
 
     return {
@@ -226,54 +236,84 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
     }
 
 
-# ---------------------------------------------------------
-# Main Generation Function
-# ---------------------------------------------------------
+# =========================================================
+# -------- GROQ GENERATION (NEW ADDITION) -----------------
+# =========================================================
+
+def _generate_groq(prompt: str) -> str:
+    """
+    Calls Groq LLM API. Ensures deterministic output.
+    """
+    if not GROQ_AVAILABLE:
+        raise RuntimeError("Groq mode enabled but groq library is not installed.")
+
+    response = GROQ_CLIENT.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=300,
+    )
+
+    return response.choices[0].message.content
+
+
+# =========================================================
+# -------- MAIN GENERATION FUNCTION ------------------------
+# =========================================================
 
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
     """
-    Generate an answer using Phi-3.5-Mini, then compute grounding metrics.
-
     Returns:
         answer (str)
         grounding_info (dict)
     """
-    # No context or contradiction → fallback
+
+    # Fallbacks
     if not chunks:
         return "I don't know.", grounding_details("I don't know.", [])
-
     if _detect_contradiction(chunks):
         return "I don't know.", grounding_details("I don't know.", chunks)
 
     # Build prompt
     prompt = build_prompt(question, chunks)
-    encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-    # Generate deterministic text
-    with torch.no_grad():
-        output_ids = model.generate(
-            **encoded,
-            max_new_tokens=250,
-            temperature=None,
-            top_p=1.0,
-            do_sample=False,
-            repetition_penalty=1.05,
-        )
+    # ========== MODE A: LOCAL Phi-3.5 (Colab) ==============
+    if USE_LOCAL:
+        encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-    # Decode and extract clean answer
-    full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    answer = extract_answer(full_output)
+        with torch.no_grad():
+            output_ids = model.generate(
+                **encoded,
+                max_new_tokens=250,
+                temperature=None,
+                top_p=1.0,
+                do_sample=False,
+                repetition_penalty=1.05,
+            )
 
-    # Final hallucination guard
+        full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        answer = extract_answer(full_output)
+
+    else:
+        # ========== MODE B: GROQ (Cloud Run) ================
+        try:
+            full_output = _generate_groq(prompt)
+            answer = extract_answer(full_output)
+
+        except Exception:
+            return "I don't know.", grounding_details("I don't know.", chunks)
+
+    # Grounding safety
     if not is_grounded(answer, chunks):
         return "I don't know.", grounding_details("I don't know.", chunks)
 
     return answer.strip(), grounding_details(answer, chunks)
 
 
-# ---------------------------------------------------------
-# Manual Test
-# ---------------------------------------------------------
+# =========================================================
+# -------- MANUAL TEST ------------------------------------
+# =========================================================
 
 if __name__ == "__main__":
     test_chunks = [
@@ -282,6 +322,6 @@ if __name__ == "__main__":
     ]
     q = "How do I report a lost credit card?"
 
-    answer, metrics = generate_answer(q, test_chunks)
-    print("Answer:\n", answer)
-    print("Metrics:\n", metrics)
+    ans, met = generate_answer(q, test_chunks)
+    print("Answer:\n", ans)
+    print("Metrics:\n", met)
