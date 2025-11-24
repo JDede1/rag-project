@@ -84,8 +84,8 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     retrieved = retriever.search(question, top_k=top_k)
     clean_chunks = clean_retrieval(retrieved)
 
-    # ---- 2. GENERATION ----
-    rag_answer = generate_answer(question, clean_chunks)
+    # ---- 2. GENERATION (UNPACK ANSWER STRING) ----
+    rag_answer, _ = generate_answer(question, clean_chunks)
 
     # ---- 3. METRICS (for debugging, not for decision)
     gold_tokens = tokenize(gold_answer) if gold_answer else []
