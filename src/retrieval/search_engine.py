@@ -6,6 +6,10 @@ Adds:
     • Query–chunk keyword scoring
     • Citation IDs for generator.py
     • Confidence scoring for main.py fallback
+
+Phase 7.2 Ready:
+    • Retrieval metadata fields remain unchanged
+    • Safe to use for monitoring (grounding_score, context_overlap added later in main.py)
 """
 
 import faiss
@@ -32,18 +36,21 @@ class RbcRetriever:
     def __init__(self):
         """Load FAISS index, metadata, and MPNet embedding model."""
 
+        # Phase 3 folder layout
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
-        # IMPORTANT: must match Phase 3 exactly
+        # Must match Phase 3 exactly
         self.model_name = "sentence-transformers/all-mpnet-base-v2"
 
+        # Load FAISS + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
+        # Load MPNet encoder
         self.model = SentenceTransformer(self.model_name)
 
         print(f"[Retriever] Loaded FAISS index with {self.index.ntotal} vectors")
@@ -86,7 +93,7 @@ class RbcRetriever:
             final_score = base + 0.02 * overlap * qword_boost
 
             r["final_score"] = float(final_score)
-            r["citation_id"] = i + 1  # sequential, stable ordering
+            r["citation_id"] = i + 1  # stable sequential IDs for generator
 
             reranked.append(r)
 
@@ -123,15 +130,17 @@ class RbcRetriever:
         # Step 3 — Stage-2 reranking
         reranked = self._rerank(query, raw_results)
 
-        # Step 4 — Confidence scoring (avg of top 2 final scores)
+        # Step 4 — Confidence scoring (shared for entire retrieved set)
         if len(reranked) >= 2:
             top_two = reranked[:2]
             avg = (top_two[0]["final_score"] + top_two[1]["final_score"]) / 2
         else:
             avg = reranked[0]["final_score"] if reranked else 0.0
 
+        avg = float(avg)
+
         for r in reranked:
-            r["confidence"] = float(avg)  # identical for whole group
+            r["confidence"] = avg  # stable confidence for the group
 
         return reranked
 
