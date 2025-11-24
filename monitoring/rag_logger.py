@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+import sys
 
 LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -19,7 +20,7 @@ def log_rag_event(
     confidence: float,
     latency_ms: float,
 ):
-    """Append a single RAG request/response event into a JSONL file."""
+    """Append a single RAG request/response event into a JSONL file and stdout."""
 
     record = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -34,7 +35,15 @@ def log_rag_event(
         "used_chunks": used_chunks,
     }
 
-    with open(LOG_FILE, "a") as f:
-        f.write(json.dumps(record) + "\n")
+    # 1) File logging (still works in Colab / local)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        # Don't crash the API if file writing fails
+        print(f"[rag_logger] File logging failed: {e}", file=sys.stderr, flush=True)
+
+    # 2) Cloud Run / Cloud Logging: log to stdout as JSON
+    print(json.dumps(record), flush=True)
 
     return True
