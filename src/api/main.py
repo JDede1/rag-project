@@ -1,11 +1,11 @@
 """
 main.py — FastAPI Backend for RAG
--------------------------------------------------------
-Phase 7 Final:
-    • JSONL request logging (monitoring/rag_logger.py)
-    • Latency measurement
-    • Grounding metrics from generator.grounding_details()
-    • 100% compatible with Phase 6 retrieval + generator
+
+Features:
+    • FAISS + MPNet semantic retrieval
+    • Phi-3.5-Mini generation with strict grounding
+    • JSONL request logging for monitoring
+    • Latency and grounding metrics (score + context overlap)
 """
 
 import sys
@@ -18,13 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Allow src/ imports
+# Allow src/ imports when running via `uvicorn src.api.main:app`
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer, grounding_details
-
-# Logging utility
+from src.generation.generator import generate_answer
 from monitoring.rag_logger import log_rag_event
 
 
@@ -33,7 +31,7 @@ from monitoring.rag_logger import log_rag_event
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Retrieval-Augmented Generation using FAISS + Phi-3.5-Mini (Phase 7 Monitoring)",
+    description="Retrieval-Augmented Generation using FAISS + MPNet + Phi-3.5-Mini",
     version="7.0.0",
 )
 
@@ -68,9 +66,16 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Clean Retrieval (from Phase 6)
+# Retrieval Post-Processing
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
+    """
+    Filter and prepare retrieval results for the generator.
+
+    Keeps only chunks with a final_score above the threshold and returns:
+        • chunks:      list of text chunks
+        • citation_ids: matching citation IDs for each chunk
+    """
     if not results:
         return [], []
 
@@ -94,6 +99,7 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 @app.get("/", response_class=HTMLResponse)
 @app.get("/landing", response_class=HTMLResponse)
 def landing(request: Request):
+    """Render the simple landing page."""
     return templates.TemplateResponse(
         "landing.html",
         {"request": request}
@@ -105,33 +111,44 @@ def landing(request: Request):
 # ---------------------------------------------------------
 @app.get("/health")
 def health():
+    """Return basic API and model health information."""
     return {
         "status": "ok",
         "record_count": len(retriever.metadata),
         "retriever_model": retriever.model_name,
-        "generator_model": "Phi-3.5-Mini-Instruct (Phase 7)",
-        "logging_enabled": True
+        "generator_model": "Phi-3.5-Mini-Instruct",
+        "logging_enabled": True,
     }
 
 
 # ---------------------------------------------------------
-# PHASE 7 — Main RAG Endpoint (Monitoring + Grounding)
+# Main RAG Endpoint (with monitoring)
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
     query: str = Query(..., description="User's banking question"),
-    top_k: int = Query(5, ge=1, le=10)
+    top_k: int = Query(5, ge=1, le=10),
 ):
+    """
+    Top-level RAG endpoint.
+
+    Steps:
+        1. Retrieve relevant chunks from FAISS.
+        2. Filter strong matches and build context.
+        3. Generate a grounded answer with Phi-3.5-Mini.
+        4. Compute grounding metrics and latency.
+        5. Log everything to JSONL for monitoring.
+    """
     start_time = time.time()
 
     try:
-        # Step 1 — retrieval
+        # 1. Retrieval
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # Step 2 — filter strong matches
+        # 2. Filter strong matches
         clean_chunks, citation_ids = clean_retrieval(retrieval_results)
 
-        # If no strong chunks, fallback immediately
+        # Fallback when no strong matches
         if not clean_chunks:
             latency_ms = (time.time() - start_time) * 1000.0
 
@@ -156,26 +173,25 @@ def ask(
                 "confidence": 0.0,
                 "grounding_score": 0.0,
                 "context_overlap": 0.0,
+                "latency_ms": latency_ms,
             }
 
-        # Step 3 — generate answer
-        answer = generate_answer(query, clean_chunks)
+        # 3. Generation (answer + grounding_info)
+        answer, grounding_info = generate_answer(query, clean_chunks)
 
-        # Step 4 — grounding metrics from generator
-        grounding = grounding_details(answer, clean_chunks)
-        grounding_score = grounding["grounding_score"]
-        context_overlap = grounding["context_overlap"]
+        grounding_score = grounding_info.get("grounding_score", 0.0)
+        context_overlap = grounding_info.get("context_overlap", 0.0)
 
-        # Step 5 — model confidence (retriever-level)
+        # 4. Confidence from retriever (shared across results)
         confidence = (
             retrieval_results[0].get("confidence", 0.0)
             if retrieval_results else 0.0
         )
 
-        # Step 6 — latency
+        # 5. Latency
         latency_ms = (time.time() - start_time) * 1000.0
 
-        # Step 7 — Log everything
+        # 6. Log event
         log_rag_event(
             query=query,
             answer=answer,
@@ -188,7 +204,7 @@ def ask(
             latency_ms=latency_ms,
         )
 
-        # Step 8 — return full results
+        # 7. Response payload
         return {
             "query": query,
             "answer": answer,
@@ -204,6 +220,7 @@ def ask(
     except Exception as e:
         latency_ms = (time.time() - start_time) * 1000.0
 
+        # Log failure case as well
         log_rag_event(
             query=query,
             answer="I don't know.",
@@ -237,5 +254,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000))
+        port=int(os.getenv("PORT", 8000)),
     )
