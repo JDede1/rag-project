@@ -13,6 +13,9 @@ Preserves:
     • Balanced grounding logic (is_grounded)
     • Strict extraction logic
     • Deterministic decoding
+
+Phase 7.2 Adds:
+    • grounding_details() — returns grounding_score and context_overlap
 """
 
 import re
@@ -157,7 +160,7 @@ def _simple_tokens(text: str) -> List[str]:
 
 def is_grounded(answer: str, chunks: List[str]) -> bool:
     """
-    UNMODIFIED — Your Balanced-mode grounding logic.
+    UNMODIFIED — Balanced-mode grounding logic.
     """
     if not answer:
         return False
@@ -200,6 +203,52 @@ def hybrid_grounding(answer: str, chunks: List[str]) -> bool:
 
 
 # =========================================================
+# PHASE 7.2 — Grounding Details
+# =========================================================
+def grounding_details(answer: str, chunks: List[str]) -> dict:
+    """
+    Returns detailed grounding metrics for monitoring:
+        • grounded (bool)
+        • grounding_score (0–1)
+        • context_overlap (ratio of overlapping tokens)
+    """
+
+    if not answer or not chunks:
+        return {
+            "grounded": False,
+            "grounding_score": 0.0,
+            "context_overlap": 0.0
+        }
+
+    ctx_text = " ".join(chunks).lower()
+    ans_text = answer.lower().rstrip(".")
+
+    ans_tokens = _simple_tokens(ans_text)
+    ctx_tokens = set(_simple_tokens(ctx_text))
+
+    if not ans_tokens:
+        return {
+            "grounded": False,
+            "grounding_score": 0.0,
+            "context_overlap": 0.0
+        }
+
+    overlap = [t for t in ans_tokens if t in ctx_tokens]
+    overlap_ratio = len(overlap) / max(1, len(ans_tokens))
+
+    grounded_bool = is_grounded(answer, chunks)
+
+    # weighted metric for monitoring
+    score = (0.7 * int(grounded_bool)) + (0.3 * overlap_ratio)
+
+    return {
+        "grounded": grounded_bool,
+        "grounding_score": round(float(score), 4),
+        "context_overlap": round(float(overlap_ratio), 4),
+    }
+
+
+# =========================================================
 # Main Generator (Phase 6 Structured + Safe)
 # =========================================================
 def generate_answer(question: str, chunks: List[str]) -> str:
@@ -213,7 +262,7 @@ def generate_answer(question: str, chunks: List[str]) -> str:
     if not chunks:
         return "I don't know."
 
-    # Contradiction handling (simple version)
+    # Contradiction handling (simple)
     if _detect_contradiction(chunks):
         return "I don't know."
 
