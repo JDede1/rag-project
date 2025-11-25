@@ -28,7 +28,6 @@ fastparquet==2024.5.0
 
 # ===============================
 # Scraping & Preprocessing (dev tools)
-# Keeping them for local/colab compatibility.
 # ===============================
 beautifulsoup4==4.13.5
 markdownify==1.2.0
@@ -41,7 +40,6 @@ playwright==1.55.0
 requests==2.32.3
 
 # ===============================
-# Cloud Run LLM Provider
+# Cloud Run LLM Provider (Groq)
 # ===============================
-groq==0.5.2
-
+groq==0.36.0
