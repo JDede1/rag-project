@@ -3,9 +3,11 @@ main.py — FastAPI Backend for RAG
 
 Features:
     • FAISS + MPNet semantic retrieval
-    • Phi-3.5-Mini generation with strict grounding
-    • JSONL request logging for monitoring
-    • Latency and grounding metrics (score + context overlap)
+    • Dual-mode generator:
+        - Local Phi-3.5-Mini (Colab)
+        - Groq-hosted Models (Cloud Run)
+    • Strict grounding & fallback logic
+    • JSONL monitoring logs
 """
 
 import sys
@@ -27,12 +29,18 @@ from monitoring.rag_logger import log_rag_event
 
 
 # ---------------------------------------------------------
+# Environment variables for Cloud Run mode
+# ---------------------------------------------------------
+GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
+
+
+# ---------------------------------------------------------
 # FastAPI Initialization
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Retrieval-Augmented Generation using FAISS + MPNet + Phi-3.5-Mini",
-    version="7.0.0",
+    description="Retrieval-Augmented Generation using FAISS + MPNet + Local/Groq LLMs",
+    version="8.0.0",
 )
 
 app.add_middleware(
@@ -116,7 +124,7 @@ def health():
         "status": "ok",
         "record_count": len(retriever.metadata),
         "retriever_model": retriever.model_name,
-        "generator_model": "Phi-3.5-Mini-Instruct",
+        "generator_mode": GEN_MODE,
         "logging_enabled": True,
     }
 
@@ -134,10 +142,10 @@ def ask(
 
     Steps:
         1. Retrieve relevant chunks from FAISS.
-        2. Filter strong matches and build context.
-        3. Generate a grounded answer with Phi-3.5-Mini.
-        4. Compute grounding metrics and latency.
-        5. Log everything to JSONL for monitoring.
+        2. Filter strong matches.
+        3. Generate grounded answer (local Phi or Groq).
+        4. Compute metrics.
+        5. Log to JSONL.
     """
     start_time = time.time()
 
@@ -176,13 +184,13 @@ def ask(
                 "latency_ms": latency_ms,
             }
 
-        # 3. Generation (answer + grounding_info)
+        # 3. Generation (Phi-3.5 or Groq)
         answer, grounding_info = generate_answer(query, clean_chunks)
 
         grounding_score = grounding_info.get("grounding_score", 0.0)
         context_overlap = grounding_info.get("context_overlap", 0.0)
 
-        # 4. Confidence from retriever (shared across results)
+        # 4. Confidence from retriever
         confidence = (
             retrieval_results[0].get("confidence", 0.0)
             if retrieval_results else 0.0
@@ -204,7 +212,7 @@ def ask(
             latency_ms=latency_ms,
         )
 
-        # 7. Response payload
+        # 7. Response
         return {
             "query": query,
             "answer": answer,
@@ -220,7 +228,7 @@ def ask(
     except Exception as e:
         latency_ms = (time.time() - start_time) * 1000.0
 
-        # Log failure case as well
+        # Log failure
         log_rag_event(
             query=query,
             answer="I don't know.",
