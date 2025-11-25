@@ -1,11 +1,8 @@
 # ===============================
-# Core RAG + LLM Stack
+# Core RAG Stack (NO LOCAL LLM)
 # ===============================
-transformers==4.44.2
+# Removed: torch, transformers, accelerate, safetensors
 sentence-transformers==2.7.0
-torch==2.2.2
-accelerate==0.33.0
-safetensors==0.4.5
 huggingface_hub==0.24.6
 
 # ===============================
@@ -31,8 +28,7 @@ fastparquet==2024.5.0
 
 # ===============================
 # Scraping & Preprocessing (dev tools)
-# These are not used in production serving,
-# but keeping them here aligns local/dev and Colab.
+# Keeping them for local/colab compatibility.
 # ===============================
 beautifulsoup4==4.13.5
 markdownify==1.2.0
@@ -40,12 +36,11 @@ tqdm==4.67.1
 playwright==1.55.0
 
 # ===============================
-# Optional: Quantization / LLM utils
-# Remove if causing build issues.
-# ===============================
-bitsandbytes==0.43.1
-
-# ===============================
 # Utilities
 # ===============================
 requests==2.32.3
+
+# ===============================
+# Cloud Run LLM Provider
+# ===============================
+groq==0.5.0
