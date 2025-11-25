@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the remaining project files
 COPY . .
 
+# CRITICAL: Explicitly copy FAISS index files (they may be ignored by git)
+COPY data/index /app/data/index
+
 # Ensure logs directory exists (Phase 7/8 monitoring compatibility)
 RUN mkdir -p /app/logs
 
