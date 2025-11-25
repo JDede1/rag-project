@@ -6,7 +6,6 @@
 # =======================================
 # DATA (NEVER PUSH LARGE FILES)
 # =======================================
-data/index/
 data/processed/
 data/raw/
 data/reports/

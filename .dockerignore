@@ -30,13 +30,13 @@ logs/
 *.ipynb
 .ipynb_checkpoints/
 
-# ---- Local data that is NOT needed in production ----
+# ---- Local data NOT needed in production ----
 data/raw/
 data/processed/
 data/reports/
 
 # ---- IMPORTANT: DO NOT IGNORE data/index ----
-# data/index/  <-- intentionally omitted
+# data/index/  <-- intentionally omitted (allowed)
 
 # ---- External tools ----
 cloudflared-linux-amd64.deb
