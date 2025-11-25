@@ -1,0 +1,46 @@
+# ============================================================
+# DO NOT IGNORE data/index !!!
+# This ensures FAISS index and metadata are included in Docker.
+# Docker uses .gitignore if .dockerignore is missing — so we must
+# explicitly define this file to override that behavior.
+# ============================================================
+
+# ---- Python bytecode & cache ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- Virtual environments ----
+venv/
+env/
+.env/
+*.egg-info/
+
+# ---- IDE / Editor settings ----
+.vscode/
+.idea/
+.DS_Store
+
+# ---- Logs ----
+logs/
+*.log
+
+# ---- Notebooks (local experimentation only) ----
+*.ipynb
+.ipynb_checkpoints/
+
+# ---- Local data that is NOT needed in production ----
+data/raw/
+data/processed/
+data/reports/
+
+# ---- IMPORTANT: DO NOT IGNORE data/index ----
+# data/index/  <-- intentionally omitted
+
+# ---- External tools ----
+cloudflared-linux-amd64.deb
+
+# ---- Build / Cache ----
+build/
+dist/
