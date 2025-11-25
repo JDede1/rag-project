@@ -1,18 +1,28 @@
 # =======================================
-# RAG PROJECT - SAFE .gitignore
-# JDede1 / rag-project
+# RAG PROJECT - PRODUCTION-SAFE .gitignore
 # =======================================
 
 # =======================================
 # DATA (NEVER PUSH LARGE FILES)
 # =======================================
-data/processed/
+# Keep FAISS index (critical)
+!data/index/
+data/index/*
+
+# Re-allow FAISS index + metadata
+!data/index/rbc_faiss.index
+!data/index/rbc_metadata.parquet
+!data/index/rbc_embeddings.onnx
+!data/index/rbc_tokenizer.json
+
+# Block all other data
 data/raw/
+data/processed/
 data/reports/
 
-# IMPORTANT: evaluation files SHOULD be included
-# so do NOT ignore data/eval/
-# data/eval/    <-- DO NOT ADD THIS
+# Evaluation data SHOULD be kept
+# (used in automated benchmarking)
+!data/eval/
 
 # Ignore Google Drive symlink if recreated
 data -> /content/drive/MyDrive/rag_project_data
@@ -33,7 +43,7 @@ __pycache__/
 *.pyo
 
 # =======================================
-# MODEL WEIGHTS (HUGE)
+# MODEL WEIGHTS (NEVER PUSH)
 # =======================================
 *.bin
 *.safetensors
@@ -50,13 +60,21 @@ huggingface/
 # =======================================
 .vscode/
 .DS_Store
+.idea/
 
 # =======================================
-# COLAB CHECKPOINTS
+# COLAB NOTEBOOK CHECKPOINTS
 # =======================================
 .ipynb_checkpoints/
 
 # =======================================
-# STREAMLIT / API INTERNAL CACHES
+# INTERNAL PYTHON CACHE
 # =======================================
 src/**/__pycache__/
+
+# =======================================
+# LOCAL DEV OR ARTIFACTS
+# =======================================
+*.old
+*.tmp
+*.bak
