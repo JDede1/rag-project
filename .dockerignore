@@ -1,46 +1,63 @@
 # ============================================================
-# DO NOT IGNORE data/index !!!
-# This ensures FAISS index and metadata are included in Docker.
-# Docker uses .gitignore if .dockerignore is missing — so we must
-# explicitly define this file to override that behavior.
+# PRODUCTION .dockerignore — RAG Backend
+# ============================================================
+# RULE:
+#   We KEEP data/index because FAISS + metadata MUST be inside the image.
+#   We IGNORE everything else that is large, experimental, or dev-only.
 # ============================================================
 
-# ---- Python bytecode & cache ----
+# ----------------------
+# Python cache
+# ----------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# ---- Virtual environments ----
+# ----------------------
+# Virtual environments
+# ----------------------
 venv/
 env/
 .env/
 *.egg-info/
 
-# ---- IDE / Editor settings ----
+# ----------------------
+# Editors / OS files
+# ----------------------
 .vscode/
 .idea/
 .DS_Store
 
-# ---- Logs ----
+# ----------------------
+# Logs (Cloud Run will create its own)
+# ----------------------
 logs/
 *.log
 
-# ---- Notebooks (local experimentation only) ----
+# ----------------------
+# Notebooks (local only)
+# ----------------------
 *.ipynb
 .ipynb_checkpoints/
 
-# ---- Local data NOT needed in production ----
+# ----------------------
+# Data — EXCLUDE everything except FAISS index
+# ----------------------
 data/raw/
 data/processed/
 data/reports/
 
-# ---- IMPORTANT: DO NOT IGNORE data/index ----
-# data/index/  <-- intentionally omitted (allowed)
+# CRITICAL: DO NOT IGNORE FAISS INDEX DIRECTORY
+# data/index/ is intentionally NOT ignored
 
-# ---- External tools ----
+# ----------------------
+# External tools (not needed in container)
+# ----------------------
 cloudflared-linux-amd64.deb
 
-# ---- Build / Cache ----
+# ----------------------
+# Build / cache folders
+# ----------------------
 build/
 dist/
