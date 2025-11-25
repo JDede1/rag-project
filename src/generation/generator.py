@@ -22,22 +22,35 @@ import os
 import re
 from typing import List, Dict, Tuple
 
-# Only import Groq client if needed
+# =========================================================
+# -------- GROQ IMPORT (PRODUCTION MODE) ------------------
+# =========================================================
+
+GEN_MODE = os.getenv("GEN_MODE", "local").lower()
+USE_LOCAL = GEN_MODE == "local"
+
 GROQ_AVAILABLE = False
-if os.getenv("GEN_MODE", "local").lower() == "groq":
+GROQ_CLIENT = None
+GROQ_MODEL = "llama3-8b-8192"
+
+if GEN_MODE == "groq":
     try:
         from groq import Groq
+
+        # Correct modern constructor for groq==0.5.2
+        GROQ_CLIENT = Groq(api_key=os.getenv("GROQ_API_KEY"))
         GROQ_AVAILABLE = True
-    except ImportError:
-        pass
+
+        print("[Generator] Production mode: Groq client initialized successfully.")
+
+    except Exception as e:
+        print("[Generator] ERROR: Could not initialize Groq client:", str(e))
+        GROQ_AVAILABLE = False
 
 
 # =========================================================
 # -------- LOCAL MODEL SETUP (Phi-3.5-mini) ---------------
 # =========================================================
-
-GEN_MODE = os.getenv("GEN_MODE", "local").lower()
-USE_LOCAL = GEN_MODE == "local"
 
 if USE_LOCAL:
     import torch
@@ -55,13 +68,6 @@ if USE_LOCAL:
         torch_dtype=DTYPE,
         device_map="auto" if torch.cuda.is_available() else None,
     )
-
-else:
-    print("[Generator] Production mode: Using Groq API — No local model loaded.")
-    if not GROQ_AVAILABLE:
-        print("[Generator] ERROR: Groq library missing, generation will fail.")
-    GROQ_CLIENT = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
-    GROQ_MODEL = "llama3-8b-8192"   # Fast and cheap; can be changed anytime
 
 
 # =========================================================
@@ -237,15 +243,15 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
 
 # =========================================================
-# -------- GROQ GENERATION (NEW ADDITION) -----------------
+# -------- GROQ GENERATION (FIXED) ------------------------
 # =========================================================
 
 def _generate_groq(prompt: str) -> str:
     """
     Calls Groq LLM API. Ensures deterministic output.
     """
-    if not GROQ_AVAILABLE:
-        raise RuntimeError("Groq mode enabled but groq library is not installed.")
+    if not GROQ_AVAILABLE or GROQ_CLIENT is None:
+        raise RuntimeError("Groq mode enabled but Groq client is not available.")
 
     response = GROQ_CLIENT.chat.completions.create(
         model=GROQ_MODEL,
