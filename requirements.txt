@@ -1,45 +1,54 @@
-# ===============================
-# Core RAG Stack (NO LOCAL LLM)
-# ===============================
-# Removed: torch, transformers, accelerate, safetensors
-sentence-transformers==2.7.0
+# ======================================
+# Core RAG Stack (Production — NO Torch)
+# ======================================
+# Removed completely:
+#   sentence-transformers
+#   transformers
+#   accelerate
+#   safetensors
+
+# ONNX Runtime for MPNet inference
+onnxruntime==1.18.1
+
+# Tokenizer loading (HuggingFace Hub minimal)
 huggingface_hub==0.24.6
 
-# ===============================
+# ======================================
 # Vector Search
-# ===============================
+# ======================================
 faiss-cpu==1.8.0.post1
 
-# ===============================
+# ======================================
 # API Backend
-# ===============================
+# ======================================
 fastapi==0.121.1
 uvicorn==0.38.0
 jinja2==3.1.4
 python-multipart==0.0.9
 
-# ===============================
+# ======================================
 # Data & Storage
-# ===============================
+# ======================================
 pandas==2.3.2
 numpy==1.26.4
 pyarrow==17.0.0
 fastparquet==2024.5.0
 
-# ===============================
-# Scraping & Preprocessing (dev tools)
-# ===============================
+# ======================================
+# Scraping & Preprocessing (Dev Only)
+# ======================================
 beautifulsoup4==4.13.5
 markdownify==1.2.0
 tqdm==4.67.1
 playwright==1.55.0
 
-# ===============================
+# ======================================
 # Utilities
-# ===============================
+# ======================================
 requests==2.32.3
 
-# ===============================
+# ======================================
 # Cloud Run LLM Provider (Groq)
-# ===============================
+# NOTE: groq==0.36.0 is validated for Python 3.11
+# ======================================
 groq==0.36.0
