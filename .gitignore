@@ -3,37 +3,43 @@
 # =======================================
 
 # =======================================
-# DATA (NEVER PUSH LARGE FILES)
+# DATA
 # =======================================
-# Keep FAISS index (critical)
-!data/index/
-data/index/*
 
-# Re-allow FAISS index + metadata
+# Keep ONLY the FAISS index directory:
+!data/index/
+
+# Ignore everything else in /data
+data/*
+!data/index/
+
+# Inside data/index, allow only the required files:
 !data/index/rbc_faiss.index
 !data/index/rbc_metadata.parquet
-!data/index/rbc_embeddings.onnx
-!data/index/rbc_tokenizer.json
 
-# Block all other data
-data/raw/
-data/processed/
-data/reports/
+# Ignore anything else inside data/index
+data/index/*
 
-# Evaluation data SHOULD be kept
-# (used in automated benchmarking)
+# Re-allow required files again (order matters)
+!data/index/rbc_faiss.index
+!data/index/rbc_metadata.parquet
+
+# Keep evaluation sets (for RAG benchmarking)
 !data/eval/
+data/eval/*
 
-# Ignore Google Drive symlink if recreated
-data -> /content/drive/MyDrive/rag_project_data
+# Re-allow evaluation files
+!data/eval/*.jsonl
+
 
 # =======================================
-# LOGS AND TUNNEL FILES
+# LOGS & TUNNEL FILES
 # =======================================
-*.log
 logs/
+*.log
 cf_tunnel.log
 rag_llm_url.txt
+
 
 # =======================================
 # PYTHON CACHE
@@ -41,40 +47,46 @@ rag_llm_url.txt
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+
 
 # =======================================
-# MODEL WEIGHTS (NEVER PUSH)
+# MODEL WEIGHTS (Local Dev Only)
 # =======================================
-*.bin
-*.safetensors
-*.pt
+# Ignore entire models/ folder except ONNX MPNet
+models/*
+!models/mpnet/
+models/mpnet/*
+!models/mpnet/model.onnx
+!models/mpnet/tokenizer.json
+!models/mpnet/config.json
+!models/mpnet/special_tokens_map.json
 
-# HuggingFace cache
-models/
+
+# HuggingFace + temporary caches
 huggingface/
 .cache/
 .env/
+
 
 # =======================================
 # EDITOR / SYSTEM FILES
 # =======================================
 .vscode/
-.DS_Store
 .idea/
+.DS_Store
+
 
 # =======================================
-# COLAB NOTEBOOK CHECKPOINTS
+# NOTEBOOK CHECKPOINTS
 # =======================================
 .ipynb_checkpoints/
 
-# =======================================
-# INTERNAL PYTHON CACHE
-# =======================================
-src/**/__pycache__/
 
 # =======================================
-# LOCAL DEV OR ARTIFACTS
+# LOCAL DEV OR ARTIFACT FILES
 # =======================================
 *.old
 *.tmp
 *.bak
+
