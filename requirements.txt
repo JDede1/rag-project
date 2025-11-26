@@ -10,7 +10,10 @@
 # ONNX Runtime for MPNet inference
 onnxruntime==1.18.1
 
-# Tokenizer loading (HuggingFace Hub minimal)
+# Tokenizer for ONNX embeddings
+tokenizers==0.19.1
+
+# HF Hub (for loading tokenizer file if needed)
 huggingface_hub==0.24.6
 
 # ======================================
@@ -49,6 +52,5 @@ requests==2.32.3
 
 # ======================================
 # Cloud Run LLM Provider (Groq)
-# NOTE: groq==0.36.0 is validated for Python 3.11
 # ======================================
 groq==0.36.0
