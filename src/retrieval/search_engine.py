@@ -1,21 +1,20 @@
 """
-search_engine.py — ONNX-based MPNet Retriever
--------------------------------------------------------
+search_engine.py — MPNet Retriever (SentenceTransformers)
+---------------------------------------------------------
 Production Retriever:
-    • Loads ONNX MPNet encoder (fast, CPU optimized)
-    • Loads FAISS index + metadata
-    • Pure ONNX + HuggingFace Tokenizers (NO Transformers)
-    • Performs vector search + reranking
+    • Uses sentence-transformers/all-mpnet-base-v2 for query embeddings
+    • Loads FAISS index + metadata built in Phase 3
+    • Performs vector search + lightweight reranking
     • Provides citation IDs + confidence scores
 """
+
+import re
+from pathlib import Path
 
 import faiss
 import numpy as np
 import pandas as pd
-import re
-from pathlib import Path
-import onnxruntime as ort
-from tokenizers import Tokenizer
+from sentence_transformers import SentenceTransformer
 
 
 # ---------------------------------------------------------
@@ -32,7 +31,16 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 
 class RbcRetriever:
     def __init__(self):
-        """Load FAISS index, metadata, tokenizer, and ONNX model."""
+        """
+        Load FAISS index, metadata, and MPNet encoder.
+
+        Assumes Phase 3 has already created:
+            data/index/rbc_faiss.index
+            data/index/rbc_metadata.parquet
+
+        FAISS index was built from all-mpnet-base-v2 embeddings
+        (normalized, IndexFlatIP).
+        """
 
         base_dir = Path(__file__).resolve().parents[2]
 
@@ -43,78 +51,58 @@ class RbcRetriever:
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
+        if not self.index_path.exists():
+            raise FileNotFoundError(f"FAISS index not found: {self.index_path}")
+        if not self.meta_path.exists():
+            raise FileNotFoundError(f"Metadata parquet not found: {self.meta_path}")
+
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
         # -----------------------------
-        # Load ONNX MPNet model
+        # Load MPNet encoder
         # -----------------------------
-        model_dir = base_dir / "models" / "mpnet"
-        self.onnx_path = model_dir / "model.onnx"
-        self.session = ort.InferenceSession(
-            str(self.onnx_path),
-            providers=["CPUExecutionProvider"]
-        )
+        model_name = "sentence-transformers/all-mpnet-base-v2"
+        self.model = SentenceTransformer(model_name)
 
-        # -----------------------------
-        # Load tokenizer.json (no transformers required)
-        # -----------------------------
-        tokenizer_path = model_dir / "tokenizer.json"
-        self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
-
-        self.max_length = 128
+        # Embedding dimension sanity check
+        dim = self.index.d
+        test_emb = self.model.encode(["test"], convert_to_numpy=True)
+        if test_emb.shape[1] != dim:
+            raise ValueError(
+                f"Embedding dimension mismatch: FAISS index dim={dim}, "
+                f"MPNet output dim={test_emb.shape[1]}"
+            )
 
         print(f"[Retriever] Loaded FAISS index: {self.index.ntotal} vectors")
         print(f"[Retriever] Loaded metadata rows: {len(self.metadata)}")
-        print(f"[Retriever] ONNX model loaded: {self.onnx_path.name}")
-        print(f"[Retriever] Tokenizer loaded from: {tokenizer_path.name}")
+        print(f"[Retriever] MPNet model loaded: {model_name}")
 
     # ---------------------------------------------------------
-    # ONNX Encoder
+    # MPNet Encoder
     # ---------------------------------------------------------
-    def embed_query(self, text: str):
-        """Encode text → ONNX → 768-d MPNet embedding."""
+    def embed_query(self, text: str) -> np.ndarray:
+        """
+        Encode text → 768-d MPNet embedding.
 
-        # -----------------------------
-        # 1. Tokenization
-        # -----------------------------
-        encoded = self.tokenizer.encode(text)
+        We normalize embeddings to match Phase 3, where:
+            - embeddings were normalized with faiss.normalize_L2
+            - IndexFlatIP is used (cosine similarity).
+        """
 
-        input_ids = encoded.ids[:self.max_length]
-        attention_mask = [1] * len(input_ids)
+        if not text or not isinstance(text, str):
+            raise ValueError("Query text must be a non-empty string.")
 
-        # Pad to max_length
-        padding = self.max_length - len(input_ids)
-        if padding > 0:
-            input_ids += [0] * padding
-            attention_mask += [0] * padding
+        emb = self.model.encode(
+            [text],
+            convert_to_numpy=True,
+            show_progress_bar=False
+        ).astype(np.float32)
 
-        input_ids = np.array([input_ids], dtype=np.int64)
-        attention_mask = np.array([attention_mask], dtype=np.int64)
+        # Normalize for cosine similarity with IndexFlatIP
+        faiss.normalize_L2(emb)
 
-        # -----------------------------
-        # 2. ONNX forward pass
-        # -----------------------------
-        ort_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        }
-
-        outputs = self.session.run(["last_hidden_state"], ort_inputs)
-
-        # Shape: (1, seq_length, hidden_dim)
-        token_embeddings = outputs[0]
-
-        # -----------------------------
-        # 3. Mean pooling
-        # -----------------------------
-        mask = attention_mask[..., None]
-        summed = (token_embeddings * mask).sum(axis=1)
-        counts = mask.sum(axis=1)
-
-        embedding = summed / np.clip(counts, 1e-9, None)
-
-        return embedding.astype(np.float32)
+        return emb
 
     # ---------------------------------------------------------
     # Stage-2 Reranking
@@ -147,25 +135,25 @@ class RbcRetriever:
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Encode → normalize → search
-        query_emb = self.embed_query(query)
-        faiss.normalize_L2(query_emb)
-
+        # Encode → search
+        query_emb = self.embed_query(query)  # already normalized
         distances, indices = self.index.search(query_emb, top_k)
 
         raw_results = []
         for score, idx in zip(distances[0], indices[0]):
             row = self.metadata.iloc[idx]
 
-            raw_results.append({
-                "question": row.get("question", ""),
-                "chunk": row.get("chunk", ""),
-                "score": float(score),
-                "url": row.get("url"),
-                "source": row.get("source"),
-                "retrieved_at": row.get("retrieved_at"),
-                "source_faq_index": int(row.get("source_faq_index", -1)),
-            })
+            raw_results.append(
+                {
+                    "question": row.get("question", ""),
+                    "chunk": row.get("chunk", ""),
+                    "score": float(score),
+                    "url": row.get("url"),
+                    "source": row.get("source"),
+                    "retrieved_at": row.get("retrieved_at"),
+                    "source_faq_index": int(row.get("source_faq_index", -1)),
+                }
+            )
 
         reranked = self._rerank(query, raw_results)
 
@@ -190,7 +178,7 @@ class RbcRetriever:
         for i, r in enumerate(results, start=1):
             print(f"{i}. ({r['final_score']:.4f}) {r['question']}")
             print(f"   Chunk: {r['chunk'][:140]}...")
-            if r["url"]:
+            if r.get("url"):
                 print(f"   URL: {r['url']}")
             print(f"   CIT: {r['citation_id']}")
             print("")
