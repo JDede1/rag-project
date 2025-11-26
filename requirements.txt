@@ -1,56 +1,41 @@
-# ======================================
-# Core RAG Stack (Production — NO Torch)
-# ======================================
-# Removed completely:
-#   sentence-transformers
-#   transformers
-#   accelerate
-#   safetensors
+# ============================================================
+# RAG Backend — Cloud Run Production Requirements
+# ============================================================
 
-# ONNX Runtime for MPNet inference
+# ------------------------------
+# ONNX + Tokenizers (Embedding)
+# ------------------------------
 onnxruntime==1.18.1
-
-# Tokenizer for ONNX embeddings
 tokenizers==0.19.1
-
-# HF Hub (for loading tokenizer file if needed)
 huggingface_hub==0.24.6
 
-# ======================================
-# Vector Search
-# ======================================
+# ------------------------------
+# Vector Search (FAISS CPU)
+# ------------------------------
 faiss-cpu==1.8.0.post1
 
-# ======================================
-# API Backend
-# ======================================
+# ------------------------------
+# API Backend (FastAPI)
+# ------------------------------
 fastapi==0.121.1
 uvicorn==0.38.0
 jinja2==3.1.4
 python-multipart==0.0.9
 
-# ======================================
-# Data & Storage
-# ======================================
-pandas==2.3.2
+# ------------------------------
+# Data Handling
+# ------------------------------
 numpy==1.26.4
+pandas==2.3.2
 pyarrow==17.0.0
 fastparquet==2024.5.0
 
-# ======================================
-# Scraping & Preprocessing (Dev Only)
-# ======================================
-beautifulsoup4==4.13.5
-markdownify==1.2.0
-tqdm==4.67.1
-playwright==1.55.0
-
-# ======================================
-# Utilities
-# ======================================
+# ------------------------------
+# Networking / Utilities
+# ------------------------------
 requests==2.32.3
 
-# ======================================
-# Cloud Run LLM Provider (Groq)
-# ======================================
+# ------------------------------
+# Production LLM Provider (Groq)
+# ------------------------------
 groq==0.36.0
