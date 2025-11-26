@@ -1,11 +1,15 @@
 """
-chat_ui.py — Phase 6 Enhanced UI for RAG System
-------------------------------------------------------------
-Adds:
-    • Structured answer rendering
-    • Citations panel
-    • Confidence display
-    • Clean formatting for multi-section answers
+chat_ui.py — Streamlit Frontend (Cloudflare Tunnel + Cloud Run)
+-----------------------------------------------------------------
+Final Architecture (Recommended):
+    Streamlit (local)
+        ↓ Cloudflare Tunnel (public)
+        ↓ Cloud Run FastAPI backend
+
+This file is now:
+    • Cloud Run–native (no ngrok, no Colab URLs)
+    • Cleaner URL loading
+    • Stable structured answer rendering
 """
 
 import streamlit as st
@@ -14,31 +18,36 @@ import os
 
 
 # ============================================================
-# Backend URL Resolver
+# BACKEND URL RESOLUTION
 # ============================================================
-COLAB_URL_FILE = "/content/rag-project/rag_llm_url.txt"
 
 def load_backend_url():
-    """Load backend URL from local file or Streamlit secrets."""
-    if os.path.exists(COLAB_URL_FILE):
-        try:
-            url = open(COLAB_URL_FILE).read().strip()
-            if url:
-                return url
-        except:
-            pass
-    return st.secrets.get("RAG_BACKEND_URL")
+    """
+    Always load backend URL from Streamlit secrets.
+    This is the correct long-term source for Cloud Run deployments.
+    """
+    url = st.secrets.get("RAG_BACKEND_URL")
+    return url
 
 
 BACKEND_URL = load_backend_url()
 
 if not BACKEND_URL:
-    st.error("Backend URL missing. Cannot start UI.")
+    st.error("""
+    ❌ Backend URL missing!
+
+    Please add this in `.streamlit/secrets.toml`:
+
+    RAG_BACKEND_URL = "https://<your-cloud-run-url>"
+    """)
     st.stop()
+
+# Normalize (remove trailing /)
+BACKEND_URL = BACKEND_URL.rstrip("/")
 
 
 # ============================================================
-# Page Setup
+# PAGE SETUP
 # ============================================================
 st.set_page_config(
     page_title="Fintech AI Assistant",
@@ -48,37 +57,37 @@ st.set_page_config(
 
 
 # ============================================================
-# Load External CSS Only
+# LOAD CSS (LOCAL ONLY)
 # ============================================================
-CSS_PATH = "src/frontend/static/style.css"
+CSS_PATH = os.path.join("src", "frontend", "static", "style.css")
 
 def load_css(path):
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-        except:
-            pass  # Silent fail
+        except Exception:
+            pass
 
 load_css(CSS_PATH)
 
 
 # ============================================================
-# Hero Banner
+# HERO BANNER
 # ============================================================
 st.markdown("""
 <div class="hero">
     <h2 style="margin-bottom:4px;">💬 Fintech AI Assistant</h2>
-    <p>Ask banking questions. Answers are grounded strictly in your FAQ knowledge base.</p>
+    <p>Ask banking questions. Answers are grounded strictly in the official FAQ knowledge base.</p>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# Session State Setup
+# SESSION STATE
 # ============================================================
 if "messages" not in st.session_state:
-    st.session_state["messages"] = []  # (role, text, citations)
+    st.session_state["messages"] = []      # (role, text, citations)
 
 if "retrieved_docs" not in st.session_state:
     st.session_state["retrieved_docs"] = []
@@ -88,12 +97,10 @@ if "waiting" not in st.session_state:
 
 
 # ============================================================
-# Render Chat History (Phase 6 formatting)
+# RENDER ANSWERS
 # ============================================================
 def render_answer_block(text: str, citations: list):
-    """
-    Render the structured answer returned by Phase 6 generator.py.
-    """
+    """Renders the sections returned by generator.py (Short Answer, Details, Sources…)."""
 
     st.markdown(text)
 
@@ -103,6 +110,7 @@ def render_answer_block(text: str, citations: list):
         st.markdown(f"**{cit_text}**")
 
 
+# Render chat history
 for role, text, citations in st.session_state["messages"]:
     with st.chat_message(role):
         if role == "assistant":
@@ -112,12 +120,13 @@ for role, text, citations in st.session_state["messages"]:
 
 
 # ============================================================
-# Handle User Input
+# HANDLE USER INPUT
 # ============================================================
 user_prompt = st.chat_input("Ask any banking-related question...")
 
 if user_prompt and not st.session_state["waiting"]:
 
+    # Add user msg to history
     st.session_state["messages"].append(("user", user_prompt, []))
 
     with st.chat_message("user"):
@@ -128,12 +137,14 @@ if user_prompt and not st.session_state["waiting"]:
 
     st.session_state["waiting"] = True
 
-    # Call backend
+    # --------------------------------------------------------
+    # Call backend securely
+    # --------------------------------------------------------
     try:
         response = requests.get(
             f"{BACKEND_URL}/ask",
             params={"query": user_prompt, "top_k": 5},
-            timeout=60
+            timeout=50,
         )
         data = response.json()
 
@@ -143,24 +154,24 @@ if user_prompt and not st.session_state["waiting"]:
         confidence = data.get("confidence", 0.0)
 
     except Exception as e:
-        answer = f"Backend connection error: {e}"
+        answer = f"Backend connection failed: {e}"
         retrieved_docs = []
         citations_used = []
         confidence = 0.0
 
-    # Replace placeholder with structured answer
+    # Show final answer
     with placeholder:
         render_answer_block(answer, citations_used)
         st.caption(f"🔒 Confidence: {confidence:.3f}")
 
-    # Update session state
+    # Save history
     st.session_state["messages"].append(("assistant", answer, citations_used))
     st.session_state["retrieved_docs"] = retrieved_docs
     st.session_state["waiting"] = False
 
 
 # ============================================================
-# Sidebar — Retrieved Evidence
+# SIDEBAR — RETRIEVED EVIDENCE
 # ============================================================
 st.sidebar.header("Retrieved Evidence", divider="gray")
 
@@ -168,7 +179,6 @@ retrieved = st.session_state["retrieved_docs"]
 
 if retrieved:
     for i, doc in enumerate(retrieved, start=1):
-
         st.sidebar.markdown("<div class='sidebar-card'>", unsafe_allow_html=True)
 
         st.sidebar.markdown(f"**{i}. {doc.get('question','(No question)')}**")
@@ -192,13 +202,12 @@ if retrieved:
             st.sidebar.markdown(f"[Source Link]({doc['url']})")
 
         st.sidebar.markdown("</div>", unsafe_allow_html=True)
-
 else:
     st.sidebar.info("Ask a question to view retrieved chunks.")
 
 
 # ============================================================
-# Debug Panel
+# DEBUG PANEL (Optional)
 # ============================================================
-with st.expander("🔍 Show Raw Retrieval Metadata (Debug Mode)"):
+with st.expander("🔍 Raw Retrieval Metadata"):
     st.write(st.session_state["retrieved_docs"])
