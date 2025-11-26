@@ -13,6 +13,8 @@ WORKDIR /app
 # --------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        libgomp1 \
+        libprotobuf-lite23 \
         && rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------------
@@ -20,9 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --------------------------------------------------------
 COPY requirements.txt .
 
-# Install Python dependencies
-# Requirements MUST NOT contain torch or transformers
-# ONNXRuntime is safe for CPU inference
 RUN pip install --no-cache-dir -r requirements.txt
 
 # --------------------------------------------------------
@@ -31,31 +30,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # --------------------------------------------------------
-# Copy FAISS index + embeddings (must exist at runtime)
+# Copy FAISS index
 # --------------------------------------------------------
 COPY data/index /app/data/index
 
 # --------------------------------------------------------
 # Copy ONNX model + tokenizer
-# These come from:
-#   /models/mpnet/model.onnx
-#   /models/mpnet/config.json
-#   /models/mpnet/tokenizer.json
-#   /models/mpnet/vocab files
 # --------------------------------------------------------
 COPY models/mpnet /app/models/mpnet
 
 # --------------------------------------------------------
-# Ensure logs directory exists (monitoring)
+# Ensure logs directory exists
 # --------------------------------------------------------
 RUN mkdir -p /app/logs
 
-# --------------------------------------------------------
-# Expose FastAPI port for Cloud Run
-# --------------------------------------------------------
 EXPOSE 8000
 
-# --------------------------------------------------------
-# Start FastAPI (Cloud Run will inject PORT)
-# --------------------------------------------------------
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
