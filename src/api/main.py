@@ -1,11 +1,11 @@
 """
-main.py — FastAPI Backend for RAG
+main.py — FastAPI Backend for RAG (Cloud Run + ONNX)
 
 Features:
-    • FAISS + MPNet semantic retrieval
+    • FAISS + ONNX MPNet semantic retrieval
     • Dual-mode generator:
-        - Local Phi-3.5-Mini (Colab)
-        - Groq-hosted Models (Cloud Run)
+        - Local Phi-3.5-Mini (Colab training)
+        - Groq-hosted LLMs (Cloud Run)
     • Strict grounding & fallback logic
     • JSONL monitoring logs
 """
@@ -39,13 +39,14 @@ GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Retrieval-Augmented Generation using FAISS + MPNet + Local/Groq LLMs",
-    version="8.0.0",
+    description="Retrieval-Augmented Generation using FAISS + ONNX MPNet + Local/Groq LLMs",
+    version="9.0.0",
 )
 
+# CORS for Cloudflare tunnel + Streamlit frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # backend is public anyway
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,8 +82,8 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
     Filter and prepare retrieval results for the generator.
 
     Keeps only chunks with a final_score above the threshold and returns:
-        • chunks:      list of text chunks
-        • citation_ids: matching citation IDs for each chunk
+        • chunks:        list of text chunks
+        • citation_ids:  matching citation IDs
     """
     if not results:
         return [], []
@@ -107,7 +108,6 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 @app.get("/", response_class=HTMLResponse)
 @app.get("/landing", response_class=HTMLResponse)
 def landing(request: Request):
-    """Render the simple landing page."""
     return templates.TemplateResponse(
         "landing.html",
         {"request": request}
@@ -123,7 +123,9 @@ def health():
     return {
         "status": "ok",
         "record_count": len(retriever.metadata),
-        "retriever_model": retriever.model_name,
+        "retriever_model": "onnx-mpnet",
+        "index_size": retriever.index.ntotal,
+        "embedding_dim": retriever.index.d,
         "generator_mode": GEN_MODE,
         "logging_enabled": True,
     }
@@ -137,26 +139,16 @@ def ask(
     query: str = Query(..., description="User's banking question"),
     top_k: int = Query(5, ge=1, le=10),
 ):
-    """
-    Top-level RAG endpoint.
-
-    Steps:
-        1. Retrieve relevant chunks from FAISS.
-        2. Filter strong matches.
-        3. Generate grounded answer (local Phi or Groq).
-        4. Compute metrics.
-        5. Log to JSONL.
-    """
     start_time = time.time()
 
     try:
         # 1. Retrieval
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # 2. Filter strong matches
+        # 2. Filtered strong matches
         clean_chunks, citation_ids = clean_retrieval(retrieval_results)
 
-        # Fallback when no strong matches
+        # Fallback: no strong context
         if not clean_chunks:
             latency_ms = (time.time() - start_time) * 1000.0
 
@@ -184,13 +176,12 @@ def ask(
                 "latency_ms": latency_ms,
             }
 
-        # 3. Generation (Phi-3.5 or Groq)
+        # 3. Generation (Phi or Groq)
         answer, grounding_info = generate_answer(query, clean_chunks)
-
         grounding_score = grounding_info.get("grounding_score", 0.0)
         context_overlap = grounding_info.get("context_overlap", 0.0)
 
-        # 4. Confidence from retriever
+        # 4. Confidence (from retriever)
         confidence = (
             retrieval_results[0].get("confidence", 0.0)
             if retrieval_results else 0.0
@@ -228,7 +219,6 @@ def ask(
     except Exception as e:
         latency_ms = (time.time() - start_time) * 1000.0
 
-        # Log failure
         log_rag_event(
             query=query,
             answer="I don't know.",
