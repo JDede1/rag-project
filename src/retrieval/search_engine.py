@@ -4,7 +4,8 @@ search_engine.py — ONNX-based MPNet Retriever
 Production Retriever:
     • Loads ONNX MPNet encoder (fast, CPU optimized)
     • Loads FAISS index + metadata
-    • Performs vector search with reranking
+    • Pure ONNX + HuggingFace Tokenizers (NO Transformers)
+    • Performs vector search + reranking
     • Provides citation IDs + confidence scores
 """
 
@@ -14,6 +15,7 @@ import pandas as pd
 import re
 from pathlib import Path
 import onnxruntime as ort
+from tokenizers import Tokenizer
 
 
 # ---------------------------------------------------------
@@ -30,7 +32,7 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 
 class RbcRetriever:
     def __init__(self):
-        """Load FAISS index, metadata, and ONNX MPNet model."""
+        """Load FAISS index, metadata, tokenizer, and ONNX model."""
 
         base_dir = Path(__file__).resolve().parents[2]
 
@@ -45,65 +47,79 @@ class RbcRetriever:
         self.metadata = pd.read_parquet(self.meta_path)
 
         # -----------------------------
-        # Load ONNX MPNet model + tokenizer files
+        # Load ONNX MPNet model
         # -----------------------------
         model_dir = base_dir / "models" / "mpnet"
         self.onnx_path = model_dir / "model.onnx"
-        self.model_dir = model_dir
-
         self.session = ort.InferenceSession(
             str(self.onnx_path),
             providers=["CPUExecutionProvider"]
         )
 
-        # Tokenizer files loaded from disk
-        from transformers import AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+        # -----------------------------
+        # Load tokenizer.json (no transformers required)
+        # -----------------------------
+        tokenizer_path = model_dir / "tokenizer.json"
+        self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
 
-        print(f"[Retriever] Loaded FAISS index with {self.index.ntotal} vectors")
+        self.max_length = 128
+
+        print(f"[Retriever] Loaded FAISS index: {self.index.ntotal} vectors")
         print(f"[Retriever] Loaded metadata rows: {len(self.metadata)}")
-        print(f"[Retriever] ONNX model: {self.onnx_path.name}")
+        print(f"[Retriever] ONNX model loaded: {self.onnx_path.name}")
+        print(f"[Retriever] Tokenizer loaded from: {tokenizer_path.name}")
 
     # ---------------------------------------------------------
     # ONNX Encoder
     # ---------------------------------------------------------
     def embed_query(self, text: str):
-        """Encode query text using ONNX MPNet encoder."""
-        inputs = self.tokenizer(
-            text,
-            return_tensors="np",
-            padding="max_length",
-            truncation=True,
-            max_length=128
-        )
+        """Encode text → ONNX → 768-d MPNet embedding."""
 
+        # -----------------------------
+        # 1. Tokenization
+        # -----------------------------
+        encoded = self.tokenizer.encode(text)
+
+        input_ids = encoded.ids[:self.max_length]
+        attention_mask = [1] * len(input_ids)
+
+        # Pad to max_length
+        padding = self.max_length - len(input_ids)
+        if padding > 0:
+            input_ids += [0] * padding
+            attention_mask += [0] * padding
+
+        input_ids = np.array([input_ids], dtype=np.int64)
+        attention_mask = np.array([attention_mask], dtype=np.int64)
+
+        # -----------------------------
+        # 2. ONNX forward pass
+        # -----------------------------
         ort_inputs = {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
         }
 
         outputs = self.session.run(["last_hidden_state"], ort_inputs)
-        # Mean pooling for SentenceTransformer-compatible embeddings
-        token_embeddings = outputs[0]  # shape: (1, seq, 768)
-        attention_mask = inputs["attention_mask"]
 
+        # Shape: (1, seq_length, hidden_dim)
+        token_embeddings = outputs[0]
+
+        # -----------------------------
+        # 3. Mean pooling
+        # -----------------------------
         mask = attention_mask[..., None]
         summed = (token_embeddings * mask).sum(axis=1)
         counts = mask.sum(axis=1)
 
-        sentence_embedding = summed / np.clip(counts, a_min=1e-9, a_max=None)
-        return sentence_embedding.astype(np.float32)
+        embedding = summed / np.clip(counts, 1e-9, None)
+
+        return embedding.astype(np.float32)
 
     # ---------------------------------------------------------
     # Stage-2 Reranking
     # ---------------------------------------------------------
     def _rerank(self, query: str, results: list):
-        """
-        Lightweight reranking:
-            - FAISS cosine similarity score
-            - keyword overlap
-            - question-word boost
-        """
         q_tokens = set(_tokenize(query))
         question_overlap = q_tokens & QUESTION_WORDS
 
@@ -131,7 +147,7 @@ class RbcRetriever:
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Encode query → normalize → search
+        # Encode → normalize → search
         query_emb = self.embed_query(query)
         faiss.normalize_L2(query_emb)
 
@@ -145,15 +161,14 @@ class RbcRetriever:
                 "question": row.get("question", ""),
                 "chunk": row.get("chunk", ""),
                 "score": float(score),
-                "url": row.get("url", None),
-                "source": row.get("source", None),
-                "retrieved_at": row.get("retrieved_at", None),
+                "url": row.get("url"),
+                "source": row.get("source"),
+                "retrieved_at": row.get("retrieved_at"),
                 "source_faq_index": int(row.get("source_faq_index", -1)),
             })
 
         reranked = self._rerank(query, raw_results)
 
-        # Confidence = average of top 2 scores
         if len(reranked) >= 2:
             avg = (reranked[0]["final_score"] + reranked[1]["final_score"]) / 2
         else:
@@ -167,14 +182,14 @@ class RbcRetriever:
         return reranked
 
     # ---------------------------------------------------------
-    # Developer Pretty Printer
+    # Pretty Print
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
         print(f"\nQuery: {query}\n")
         for i, r in enumerate(results, start=1):
             print(f"{i}. ({r['final_score']:.4f}) {r['question']}")
-            print(f"   Chunk: {r['chunk'][:160]}...")
+            print(f"   Chunk: {r['chunk'][:140]}...")
             if r["url"]:
                 print(f"   URL: {r['url']}")
             print(f"   CIT: {r['citation_id']}")
