@@ -1,13 +1,12 @@
 # ============================================================
-# RAG Backend — Cloud Run Production Requirements
+# RAG Backend — Cloud Run Requirements (MPNet + FAISS)
 # ============================================================
 
 # ------------------------------
-# ONNX + Tokenizers (Embedding)
+# MPNet Embedding Model
 # ------------------------------
-onnxruntime==1.18.1
-tokenizers==0.19.1
-huggingface_hub==0.24.6
+sentence-transformers==2.5.1
+torch==2.1.2
 
 # ------------------------------
 # Vector Search (FAISS CPU)
