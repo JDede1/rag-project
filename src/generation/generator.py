@@ -54,10 +54,18 @@ if USE_GROQ:
 
 
 # =========================================================
-# -------- LOAD LOCAL PHI MODEL (ONLY IN COLAB) -----------
+# -------- LAZY LOAD LOCAL PHI MODEL (COLAB) --------------
 # =========================================================
 
-if USE_LOCAL:
+_tokenizer = None
+_model = None
+
+def _load_local_model():
+    """Lazy-loads Phi-3.5 model only when first needed."""
+    global _tokenizer, _model
+    if _tokenizer is not None and _model is not None:
+        return _tokenizer, _model
+
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -65,14 +73,16 @@ if USE_LOCAL:
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     DTYPE = torch.float16 if torch.cuda.is_available() else torch.float32
 
-    print(f"[Generator] Local mode: Loading {MODEL_NAME} on {DEVICE}")
+    print(f"[Generator] Lazy-loading {MODEL_NAME} on {DEVICE}...")
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForCausalLM.from_pretrained(
+    _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    _model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=DTYPE,
         device_map="auto" if torch.cuda.is_available() else None,
     )
+
+    return _tokenizer, _model
 
 
 # =========================================================
@@ -87,16 +97,9 @@ def _attach_citations(chunks: List[str]) -> List[str]:
 
 
 def _detect_contradiction(chunks: List[str]) -> bool:
-    """
-    Minimal contradiction detector.
-    Returns True → force 'I don't know.'
-    """
     text = " ".join(chunks).lower()
-
-    # Example: “no fee” + “fee applies”
     if ("no fee" in text and "fee" in text and "no fee" not in text.split("fee")[0]):
         return True
-
     return False
 
 
@@ -179,7 +182,6 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
 
     ans = answer.lower().strip()
 
-    # “I don’t know” is always allowed
     if ans in {"i don't know", "i don't know."}:
         return True
 
@@ -188,22 +190,19 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
 
     ctx_text = " ".join(chunks).lower()
 
-    # Exact snippet match
     if ans.rstrip(".") in ctx_text:
         return True
 
-    # Phone or numeric match
     if set(_PHONE_RE.findall(ans)) & set(_PHONE_RE.findall(ctx_text)):
         return True
 
     if set(_NUMBER_RE.findall(ans)) & set(_NUMBER_RE.findall(ctx_text)):
         return True
 
-    # Token overlap
     ans_tokens = _simple_tokens(ans)
     ctx_tokens = set(_simple_tokens(ctx_text))
-
     overlap = [t for t in ans_tokens if t in ctx_tokens]
+
     return len(overlap) >= 2
 
 
@@ -257,7 +256,6 @@ def _generate_groq(prompt: str) -> str:
 # =========================================================
 
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
-    # If no chunks or contradictions → fallback
     if not chunks or _detect_contradiction(chunks):
         return "I don't know.", grounding_details("I don't know.", [])
 
@@ -265,6 +263,8 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
     # Local Phi (Colab)
     if USE_LOCAL:
+        tokenizer, model = _load_local_model()
+
         encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
 
         with torch.no_grad():
@@ -288,7 +288,6 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         except Exception:
             return "I don't know.", grounding_details("I don't know.", chunks)
 
-    # Grounding enforcement
     if not is_grounded(answer, chunks):
         return "I don't know.", grounding_details("I don't know.", chunks)
 
