@@ -16,6 +16,9 @@ USE_GROQ = GEN_MODE == "groq"
 
 GROQ_MODEL = "llama3-8b-8192"
 
+# NEW — evaluation override
+ENFORCE_GROUNDING = os.getenv("ENFORCE_GROUNDING", "true").lower().strip() == "true"
+
 if USE_LOCAL:
     import torch
 
@@ -105,36 +108,19 @@ def build_prompt(question: str, chunks: List[str]) -> str:
     )
 
 # =========================================================
-# FIXED — CLEAN & SAFE extract_answer()
+# extract_answer() — strict but preserves structure
 # =========================================================
 
 def extract_answer(full_output: str) -> str:
-    """
-    Preserve the model's structure:
-    - Short Answer:
-    - Details:
-    - Important Notes:
-    - Sources:
-
-    Remove ONLY:
-    - prompt echoes (Context:, Question:, system:, assistant:)
-    - duplicated "Answer:"
-    """
-
     text = full_output.strip()
 
-    # Find first occurrence of "answer:" (case-insensitive)
     lower = text.lower()
     if "answer:" in lower:
         idx = lower.index("answer:")
         text = text[idx + len("answer:"):].strip()
 
-    # Remove prompt echoes ONLY
     forbidden_starts = (
-        "context:",
-        "question:",
-        "system:",
-        "assistant:",
+        "context:", "question:", "system:", "assistant:",
         "you are a strict banking assistant"
     )
 
@@ -142,20 +128,19 @@ def extract_answer(full_output: str) -> str:
     for line in text.split("\n"):
         l = line.strip()
         ll = l.lower()
-        if any(ll.startswith(fs) for fs in forbidden_starts):
+        if any(ll.startswith(fx) for fx in forbidden_starts):
             continue
         cleaned.append(l)
 
     text = "\n".join(cleaned).strip()
 
-    # Remove leading punctuation (e.g., ": Short Answer")
     while text.startswith(":"):
         text = text[1:].lstrip()
 
     return text.strip()
 
 # =========================================================
-# GROUNDING LOGIC (NORMAL STRICTNESS)
+# GROUNDING LOGIC (Normal Strictness)
 # =========================================================
 
 _STOP = {
@@ -174,7 +159,6 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
         return False
 
     ans = answer.lower().strip()
-
     if ans in {"i don't know", "i don't know."}:
         return True
 
@@ -188,24 +172,21 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
     if not ans_tokens:
         return False
 
-    # Phone numbers must match
     if set(_PHONE.findall(ans)) - set(_PHONE.findall(ctx)):
         return False
 
-    # Numeric values must match
     if set(_NUM.findall(ans)) - set(_NUM.findall(ctx)):
         return False
 
-    # Substring match allowed
     if ans.rstrip(".") in ctx:
         return True
 
-    # Overlap logic
     overlap = [t for t in ans_tokens if t in ctx_tokens]
     overlap_ratio = len(overlap) / len(ans_tokens)
     foreign_ratio = 1 - overlap_ratio
 
     return overlap_ratio >= 0.35 and foreign_ratio <= 0.5
+
 
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
     if not answer or not chunks:
@@ -225,7 +206,6 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
     foreign_ratio = 1 - overlap_ratio
 
-    # Numeric consistency
     numeric_ok = (
         set(_PHONE.findall(ans)).issubset(set(_PHONE.findall(ctx))) and
         set(_NUM.findall(ans)).issubset(set(_NUM.findall(ctx)))
@@ -297,11 +277,15 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         except Exception:
             return "I don't know.", grounding_details("I don't know.", chunks)
 
-    # FINAL SAFETY CHECK
-    if not is_grounded(answer, chunks):
+    # =========================================================
+    # FINAL SAFETY GATE — now controlled by ENFORCE_GROUNDING
+    # =========================================================
+    details = grounding_details(answer, chunks)
+
+    if ENFORCE_GROUNDING and not details["grounded"]:
         return "I don't know.", grounding_details("I don't know.", chunks)
 
-    return answer.strip(), grounding_details(answer, chunks)
+    return answer.strip(), details
 
 # =========================================================
 # MANUAL TEST
@@ -312,6 +296,7 @@ if __name__ == "__main__":
         "If your RBC credit card is lost or stolen, call 1-800-769-2512 immediately.",
         "We will block the card and issue a replacement."
     ]
+
     q = "How do I report a lost credit card?"
     ans, met = generate_answer(q, test_chunks)
     print(ans)
