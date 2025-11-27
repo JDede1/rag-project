@@ -32,6 +32,16 @@ GROQ_MODEL = "llama3-8b-8192"
 
 
 # =========================================================
+# -------- OPTIONAL TORCH IMPORT (SAFE) -------------------
+# =========================================================
+# This avoids: "name 'torch' is not defined" during local mode.
+# In Cloud Run (GEN_MODE=groq), this block never executes.
+
+if USE_LOCAL:
+    import torch
+
+
+# =========================================================
 # -------- TRY LOADING GROQ (CLOUD MODE) ------------------
 # =========================================================
 
@@ -66,7 +76,6 @@ def _load_local_model():
     if _tokenizer is not None and _model is not None:
         return _tokenizer, _model
 
-    import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
     MODEL_NAME = "microsoft/Phi-3.5-mini-instruct"
@@ -288,6 +297,7 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         except Exception:
             return "I don't know.", grounding_details("I don't know.", chunks)
 
+    # Grounding enforcement
     if not is_grounded(answer, chunks):
         return "I don't know.", grounding_details("I don't know.", chunks)
 
