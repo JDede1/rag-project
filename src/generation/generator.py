@@ -25,7 +25,7 @@ from typing import List, Dict, Tuple
 # =========================================================
 
 GEN_MODE = os.getenv("GEN_MODE", "local").lower().strip()
-USE_LOCAL = GEN_MODE == "local"      # Colab
+USE_LOCAL = GEN_MODE == "local"      # Colab / local dev
 USE_GROQ = GEN_MODE == "groq"        # Cloud Run
 
 GROQ_MODEL = "llama3-8b-8192"
@@ -107,6 +107,11 @@ def _attach_citations(chunks: List[str]) -> List[str]:
 
 
 def _detect_contradiction(chunks: List[str]) -> bool:
+    """
+    Simple contradiction heuristic:
+    if text simultaneously implies "no fee" and "fee applies",
+    we treat it as conflicting and force "I don't know."
+    """
     text = " ".join(chunks).lower()
     if ("no fee" in text and "fee" in text and "no fee" not in text.split("fee")[0]):
         return True
@@ -151,9 +156,13 @@ def build_prompt(question: str, chunks: List[str]) -> str:
 # =========================================================
 
 def extract_answer(full_output: str) -> str:
+    """
+    Strip prompt echoes and system text, and clean out
+    leading 'Answer:' / colons / boilerplate.
+    """
     text = full_output.strip()
 
-    # If the model echoed "Answer:" keep everything after it
+    # If the model echoed "Answer", keep everything after the first occurrence
     if "Answer" in text:
         text = text.split("Answer", 1)[-1]
 
@@ -178,7 +187,7 @@ def extract_answer(full_output: str) -> str:
 
 # =========================================================
 # -------- GROUNDING LOGIC (NORMAL STRICTNESS) ------------
-# =========================================================
+// =========================================================
 
 _STOPWORDS = {
     "the", "is", "a", "to", "of", "and", "in", "for", "on",
@@ -340,12 +349,14 @@ def _generate_groq(prompt: str) -> str:
 # =========================================================
 
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
+    # If there is no context or the context contradicts itself,
+    # we immediately fall back to a safe "I don't know."
     if not chunks or _detect_contradiction(chunks):
         return "I don't know.", grounding_details("I don't know.", [])
 
     prompt = build_prompt(question, chunks)
 
-    # Local Phi (Colab)
+    # Local Phi (Colab / dev)
     if USE_LOCAL:
         tokenizer, model = _load_local_model()
 
