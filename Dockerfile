@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # ============================================================
-# System Dependencies (FAISS + ONNX)
+# System Dependencies (FAISS + Torch CPU)
 # ============================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -23,12 +23,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
-# Copy Full Application Source Code
+# Copy Application
 # ============================================================
 COPY . .
 
 # ============================================================
-# Ensure Logs Directory Exists
+# Prepare Logs Directory
 # ============================================================
 RUN mkdir -p /app/logs
 
@@ -38,6 +38,6 @@ RUN mkdir -p /app/logs
 EXPOSE 8000
 
 # ============================================================
-# Start Server
+# Start API Server
 # ============================================================
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
