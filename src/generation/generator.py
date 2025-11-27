@@ -187,7 +187,7 @@ def extract_answer(full_output: str) -> str:
 
 # =========================================================
 # -------- GROUNDING LOGIC (NORMAL STRICTNESS) ------------
-// =========================================================
+# =========================================================
 
 _STOPWORDS = {
     "the", "is", "a", "to", "of", "and", "in", "for", "on",
@@ -404,3 +404,4 @@ if __name__ == "__main__":
     ans, met = generate_answer(q, test_chunks)
     print("ANSWER:\n", ans)
     print("\nMETRICS:\n", met)
+
