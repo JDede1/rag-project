@@ -2,12 +2,12 @@
 main.py — FastAPI Backend for Production RAG (Cloud Run + ONNX)
 
 Features:
-    • FAISS + ONNX MPNet semantic retrieval
+    • FAISS + ONNX MPNet retrieval
     • Strict literal-mode generator (Phi or Groq)
-    • Option B topic matching (lexical + domain hints)
-    • Semantic intent filtering (fraud/lost/cancel/general)
+    • Option B topic matching (in generator.py)
+    • Stable retrieval filtering (no intent-category loss)
     • Strict grounding enforcement
-    • JSONL monitoring logs  (monitoring/rag_logger.py)
+    • JSONL monitoring logs (monitoring/rag_logger.py)
 """
 
 import sys
@@ -21,10 +21,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Required: allow src/ imports when running via uvicorn
+# Make sure src/ is importable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Internal imports
+# Internal modules
 from src.retrieval.search_engine import RbcRetriever
 from src.generation.generator import generate_answer
 from monitoring.rag_logger import log_rag_event
@@ -43,7 +43,7 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)")
 app = FastAPI(
     title="Fintech RAG API",
     description="Strict Literal RBC RAG using FAISS + ONNX MPNet + Phi/Groq",
-    version="11.0.0",
+    version="12.0.0",
 )
 
 app.add_middleware(
@@ -77,53 +77,33 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Intent Detection (semantic grouping)
+# CORRECT & STABLE RETRIEVAL FILTERING 
+# (NO intent filtering — avoids lost/stolen vs fraud misrouting)
 # ---------------------------------------------------------
-def _intent(chunk: str) -> str:
+def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    Assign a coarse-grained semantic intent category to a chunk.
-    Used to enforce stricter context consistency (Option B).
+    Stable retrieval filtering:
+
+        1. Sort chunks by final_score
+        2. Keep strong chunks only
+        3. Return only the top-N chunk texts
+
+    This version does NOT:
+        - group by intent category
+        - rely on semantic grouping
+        - discard lost/stolen chunks because of fraud noise
+
+    All strict topic checking is handled inside generator.py (Option B).
     """
-    c = chunk.lower()
-
-    if "fraud" in c or "fraudulent" in c:
-        return "fraud"
-
-    if "lost" in c or "stolen" in c:
-        return "lost"
-
-    if "cancel" in c or "cancelling" in c:
-        return "cancel"
-
-    return "general"
-
-
-# ---------------------------------------------------------
-# Retrieval Post-Processing (Option B)
-# ---------------------------------------------------------
-def clean_retrieval(
-    results: list,
-    score_threshold: float = 0.32,
-    max_items: int = 4,
-):
-    """
-    Option B post-processing:
-        1. Sort by final_score
-        2. Keep only strong-scoring chunks
-        3. Detect dominant intent category
-        4. Filter to keep chunks ONLY from that intent group
-    """
-
     if not results:
         return []
 
-    # 1. Sort by final score
+    # Sort by retrieval strength
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
-    # 2. Strong chunks
+    # Keep high-quality chunks
     strong = [
-        r
-        for r in ordered
+        r for r in ordered
         if r.get("final_score", 0.0) >= score_threshold
         and isinstance(r.get("chunk"), str)
     ]
@@ -131,18 +111,8 @@ def clean_retrieval(
     if not strong:
         return []
 
-    # 3. Intent classification
-    intents = [_intent(r["chunk"]) for r in strong]
-    dominant_intent = intents[0]  # best-scoring chunk determines category
-
-    # 4. Keep only chunks matching the dominant category
-    filtered = [r for r in strong if _intent(r["chunk"]) == dominant_intent]
-
-    # If filtering removes everything (rare), fall back to strong
-    if not filtered:
-        filtered = strong
-
-    return [r["chunk"].strip() for r in filtered][:max_items]
+    # Return only the chunk strings
+    return [r["chunk"].strip() for r in strong][:max_items]
 
 
 # ---------------------------------------------------------
@@ -187,7 +157,7 @@ def ask(
         retrieval_results = retriever.search(query, top_k=top_k)
 
         # -------------------------------------------------
-        # 2. OPTION B CONTEXT FILTERING
+        # 2. CLEAN + STABLE RETRIEVAL (NO INTENT FILTERING)
         # -------------------------------------------------
         clean_chunks = clean_retrieval(retrieval_results)
 
@@ -221,7 +191,7 @@ def ask(
             }
 
         # -------------------------------------------------
-        # 3. LLM GENERATION (strict literal mode)
+        # 3. GENERATE STRICT-LITERAL ANSWER
         # -------------------------------------------------
         answer, grounding = generate_answer(query, clean_chunks)
 
@@ -229,7 +199,7 @@ def ask(
         context_overlap = grounding.get("context_overlap", 0.0)
 
         # -------------------------------------------------
-        # 4. Extract inline CIT:x references
+        # 4. Extract inline citations
         # -------------------------------------------------
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
@@ -256,7 +226,7 @@ def ask(
         )
 
         # -------------------------------------------------
-        # 7. Return full API response
+        # 7. Return response payload
         # -------------------------------------------------
         return {
             "query": query,
