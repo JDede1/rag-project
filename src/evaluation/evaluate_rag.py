@@ -5,11 +5,11 @@ Phase 5 Evaluation — Strict Literal Mode RAG
 
 This version:
     • Uses the SAME retrieval logic as the FastAPI backend
-    • Uses the SAME generator logic (strict literal mode)
+    • Uses the SAME generator logic (strict literal mode + strict topic match)
     • Uses grounding_details() from generator.py
     • Evaluates:
-        - known questions  → MUST be grounded
-        - unknown questions → MUST say "I don't know."
+          - known questions  → MUST be grounded
+          - unknown questions → MUST say "I don't know."
     • Produces JSONL evaluation logs identical to Phase 5
 """
 
@@ -26,14 +26,13 @@ from src.generation.generator import generate_answer, grounding_details
 
 
 # ---------------------------------------------------------
-# Retrieval Cleaner (matches new main.py)
+# Retrieval Cleaner (matches FASTAPI clean_retrieval)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
     EXACT MATCH with FastAPI clean_retrieval()
 
     Sorting by final_score → returning ONLY chunks
-    (no citation IDs because generator assigns CIT:1…)
     """
     if not results:
         return []
@@ -75,7 +74,7 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     q_id = example.get("id")
     question = example.get("question")
     gold_answer = example.get("answer")  # None for unknown
-    q_type = example.get("type", "unknown")
+    q_type = example.get("type", "known")
 
     # ---------- 1. RETRIEVAL ----------
     retrieved = retriever.search(question, top_k=top_k)
@@ -92,13 +91,13 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     normalized_idk = _normalize_idk(rag_answer)
 
     if q_type == "unknown":
-        # Must answer IDK
+        # Unknown → MUST correctly output “I don't know”
         hallucinated = normalized_idk not in {
             "i dont know",
             "i do not know",
         }
     else:
-        # Known → MUST be grounded
+        # Known → MUST be grounded (strict literal mode)
         hallucinated = not grounded_flag
 
     return {
