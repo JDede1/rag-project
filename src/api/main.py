@@ -31,9 +31,9 @@ from monitoring.rag_logger import log_rag_event
 # ---------------------------------------------------------
 # Environment
 # ---------------------------------------------------------
-GEN_MODE = os.getenv("GEN_MODE", "local")  # local or groq
+GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
 
-# Detect CIT:x patterns from generator output
+# Extract inline citations from generator output
 CIT_PATTERN = re.compile(r"CIT:(\d+)")
 
 
@@ -46,7 +46,6 @@ app = FastAPI(
     version="10.0.0",
 )
 
-# CORS for Streamlit + Cloudflare + local dev
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -82,8 +81,8 @@ print("Retriever loaded.\n")
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    Returns ONLY cleaned text chunks.
-    Since generator assigns its own CIT:1, CIT:2… we do NOT return retriever IDs.
+    Returns only the cleaned text chunks.
+    Generator assigns its own CIT:1, CIT:2… so retriever IDs are not reused.
     """
     if not results:
         return []
@@ -106,10 +105,7 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 @app.get("/", response_class=HTMLResponse)
 @app.get("/landing", response_class=HTMLResponse)
 def landing(request: Request):
-    return templates.TemplateResponse(
-        "landing.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse("landing.html", {"request": request})
 
 
 # ---------------------------------------------------------
@@ -129,7 +125,7 @@ def health():
 
 
 # ---------------------------------------------------------
-# MAIN RAG ENDPOINT (Strict Literal + Strict Topic Match)
+# MAIN RAG ENDPOINT — strict literal + strict topic match
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
@@ -145,18 +141,18 @@ def ask(
         retrieval_results = retriever.search(query, top_k=top_k)
 
         # -------------------------------------------------
-        # 2. CLEAN RETRIEVAL → ONLY TEXT CHUNKS
+        # 2. CLEAN RETRIEVAL → ONLY CHUNKS
         # -------------------------------------------------
         clean_chunks = clean_retrieval(retrieval_results)
 
-        # If no context, immediately fallback
+        # No chunks → guaranteed "I don't know."
         if not clean_chunks:
             latency_ms = (time.time() - start_time) * 1000.0
-            safe_answer = "I don't know."
+            safe = "I don't know."
 
             log_rag_event(
                 query=query,
-                answer=safe_answer,
+                answer=safe,
                 retrieved=retrieval_results,
                 used_chunks=[],
                 citations=[],
@@ -168,7 +164,7 @@ def ask(
 
             return {
                 "query": query,
-                "answer": safe_answer,
+                "answer": safe,
                 "citations_used": [],
                 "retrieved": retrieval_results,
                 "used_context": [],
@@ -179,7 +175,7 @@ def ask(
             }
 
         # -------------------------------------------------
-        # 3. GENERATION (Strict Literal + Strict Topic Match)
+        # 3. GENERATION (strict literal + strict topic match)
         # -------------------------------------------------
         answer, grounding_info = generate_answer(query, clean_chunks)
 
@@ -187,17 +183,14 @@ def ask(
         context_overlap = grounding_info.get("context_overlap", 0.0)
 
         # -------------------------------------------------
-        # 4. CITATION EXTRACTION FROM ANSWER
+        # 4. CITATION EXTRACTION
         # -------------------------------------------------
         citations_used = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
         # -------------------------------------------------
-        # 5. CONFIDENCE SCORE FROM RETRIEVER
+        # 5. CONFIDENCE SCORE
         # -------------------------------------------------
-        confidence = (
-            retrieval_results[0].get("confidence", 0.0)
-            if retrieval_results else 0.0
-        )
+        confidence = retrieval_results[0].get("confidence", 0.0) if retrieval_results else 0.0
 
         # -------------------------------------------------
         # 6. LATENCY
@@ -205,7 +198,7 @@ def ask(
         latency_ms = (time.time() - start_time) * 1000.0
 
         # -------------------------------------------------
-        # 7. LOG TO JSONL
+        # 7. LOG EVENT
         # -------------------------------------------------
         log_rag_event(
             query=query,
@@ -236,12 +229,12 @@ def ask(
 
     except Exception as e:
         latency_ms = (time.time() - start_time) * 1000.0
+        safe = "I don't know."
 
-        safe_answer = "I don't know."
-
+        # Log failure event
         log_rag_event(
             query=query,
-            answer=safe_answer,
+            answer=safe,
             retrieved=[],
             used_chunks=[],
             citations=[],
@@ -253,7 +246,7 @@ def ask(
 
         return {
             "query": query,
-            "answer": safe_answer,
+            "answer": safe,
             "error": str(e),
             "citations_used": [],
             "used_context": [],
