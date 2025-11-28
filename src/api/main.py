@@ -4,7 +4,8 @@ main.py — FastAPI Backend for Production RAG (Cloud Run + ONNX)
 Features:
     • FAISS + ONNX MPNet semantic retrieval
     • Strict literal-mode generator (Phi or Groq)
-    • Strict topic matching (Option A)
+    • Strict topic matching 
+    • Domain-specific intent filtering 
     • Strict grounding enforcement
     • JSONL monitoring logs
 """
@@ -31,9 +32,7 @@ from monitoring.rag_logger import log_rag_event
 # ---------------------------------------------------------
 # Environment
 # ---------------------------------------------------------
-GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
-
-# Extract inline citations from generator output
+GEN_MODE = os.getenv("GEN_MODE", "local")
 CIT_PATTERN = re.compile(r"CIT:(\d+)")
 
 
@@ -42,8 +41,8 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)")
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Strict Literal RBC Banking RAG using FAISS + ONNX MPNet + Phi/Groq LLMs",
-    version="10.0.0",
+    description="Strict Literal RBC Banking RAG using FAISS + ONNX MPNet + Phi/Groq",
+    version="11.0.0",
 )
 
 app.add_middleware(
@@ -77,26 +76,62 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Retrieval Post-Processing (Strict Literal Mode)
+# Intent detection (Option B)
+# ---------------------------------------------------------
+def _intent(chunk: str) -> str:
+    """Assign a simple intent label to each chunk."""
+    c = chunk.lower()
+
+    if "fraud" in c or "fraudulent" in c:
+        return "fraud"
+    if "lost" in c or "stolen" in c:
+        return "lost"
+    if "cancel" in c or "cancelling" in c:
+        return "cancel"
+
+    return "general"
+
+
+# ---------------------------------------------------------
+# Retrieval Post-Processing (Strict + Consistent)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    Returns only the cleaned text chunks.
-    Generator assigns its own CIT:1, CIT:2… so retriever IDs are not reused.
+    Updated to Option B:
+    1. Sort by final score
+    2. Filter out low-scoring chunks
+    3. Detect dominant semantic intent
+    4. Keep only chunks from the same intent family
     """
+
     if not results:
         return []
 
+    # 1. Sort
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
+    # 2. Strong chunks only
     strong = [
         r for r in ordered
         if r.get("final_score", 0.0) >= score_threshold
         and isinstance(r.get("chunk"), str)
     ]
 
-    chunks = [r["chunk"].strip() for r in strong][:max_items]
-    return chunks
+    if not strong:
+        return []
+
+    # 3. Intent classification on strong chunks
+    intents = [_intent(r["chunk"]) for r in strong]
+    dominant_intent = intents[0]  # top-1 intent = dominant intent
+
+    # 4. Keep chunks belonging to the dominant intent
+    filtered = [r for r in strong if _intent(r["chunk"]) == dominant_intent]
+
+    # Safety net
+    if not filtered:
+        filtered = strong
+
+    return [r["chunk"].strip() for r in filtered][:max_items]
 
 
 # ---------------------------------------------------------
@@ -109,7 +144,7 @@ def landing(request: Request):
 
 
 # ---------------------------------------------------------
-# Health Endpoint
+# Health Check
 # ---------------------------------------------------------
 @app.get("/health")
 def health():
@@ -125,29 +160,24 @@ def health():
 
 
 # ---------------------------------------------------------
-# MAIN RAG ENDPOINT — strict literal + strict topic match
+# MAIN RAG ENDPOINT
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
     query: str = Query(..., description="User's RBC banking question"),
     top_k: int = Query(5, ge=1, le=10),
 ):
-    start_time = time.time()
+    start = time.time()
 
     try:
-        # -------------------------------------------------
         # 1. RETRIEVAL
-        # -------------------------------------------------
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # -------------------------------------------------
-        # 2. CLEAN RETRIEVAL → ONLY CHUNKS
-        # -------------------------------------------------
+        # 2. CLEANED CONTEXT (Option B + strict literal)
         clean_chunks = clean_retrieval(retrieval_results)
 
-        # No chunks → guaranteed "I don't know."
         if not clean_chunks:
-            latency_ms = (time.time() - start_time) * 1000.0
+            latency = (time.time() - start) * 1000
             safe = "I don't know."
 
             log_rag_event(
@@ -159,7 +189,7 @@ def ask(
                 grounding_score=0.0,
                 context_overlap=0.0,
                 confidence=0.0,
-                latency_ms=latency_ms,
+                latency_ms=latency,
             )
 
             return {
@@ -171,67 +201,53 @@ def ask(
                 "confidence": 0.0,
                 "grounding_score": 0.0,
                 "context_overlap": 0.0,
-                "latency_ms": latency_ms,
+                "latency_ms": latency,
             }
 
-        # -------------------------------------------------
-        # 3. GENERATION (strict literal + strict topic match)
-        # -------------------------------------------------
-        answer, grounding_info = generate_answer(query, clean_chunks)
+        # 3. GENERATE STRICT LITERAL ANSWER
+        answer, grounding = generate_answer(query, clean_chunks)
 
-        grounding_score = grounding_info.get("grounding_score", 0.0)
-        context_overlap = grounding_info.get("context_overlap", 0.0)
+        grounding_score = grounding.get("grounding_score", 0.0)
+        context_overlap = grounding.get("context_overlap", 0.0)
 
-        # -------------------------------------------------
-        # 4. CITATION EXTRACTION
-        # -------------------------------------------------
-        citations_used = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
+        # 4. Extract citations
+        citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
-        # -------------------------------------------------
-        # 5. CONFIDENCE SCORE
-        # -------------------------------------------------
-        confidence = retrieval_results[0].get("confidence", 0.0) if retrieval_results else 0.0
+        # 5. Retriever confidence
+        confidence = retrieval_results[0].get("confidence", 0.0)
 
-        # -------------------------------------------------
-        # 6. LATENCY
-        # -------------------------------------------------
-        latency_ms = (time.time() - start_time) * 1000.0
+        latency = (time.time() - start) * 1000
 
-        # -------------------------------------------------
-        # 7. LOG EVENT
-        # -------------------------------------------------
+        # 6. Log event
         log_rag_event(
             query=query,
             answer=answer,
             retrieved=retrieval_results,
             used_chunks=clean_chunks,
-            citations=citations_used,
+            citations=citations,
             grounding_score=grounding_score,
             context_overlap=context_overlap,
             confidence=confidence,
-            latency_ms=latency_ms,
+            latency_ms=latency,
         )
 
-        # -------------------------------------------------
-        # 8. RESPONSE
-        # -------------------------------------------------
+        # 7. Return
         return {
             "query": query,
             "answer": answer,
-            "citations_used": citations_used,
+            "citations_used": citations,
             "retrieved": retrieval_results,
             "used_context": clean_chunks,
             "confidence": confidence,
             "grounding_score": grounding_score,
             "context_overlap": context_overlap,
-            "latency_ms": latency_ms,
+            "latency_ms": latency,
         }
 
     except Exception as e:
-        latency_ms = (time.time() - start_time) * 1000.0
+        latency = (time.time() - start) * 1000
         safe = "I don't know."
 
-        # Log failure event
         log_rag_event(
             query=query,
             answer=safe,
@@ -241,7 +257,7 @@ def ask(
             grounding_score=0.0,
             context_overlap=0.0,
             confidence=0.0,
-            latency_ms=latency_ms,
+            latency_ms=latency,
         )
 
         return {
@@ -254,7 +270,7 @@ def ask(
             "confidence": 0.0,
             "grounding_score": 0.0,
             "context_overlap": 0.0,
-            "latency_ms": latency_ms,
+            "latency_ms": latency,
         }
 
 
