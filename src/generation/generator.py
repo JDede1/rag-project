@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py — STRICT LITERAL MODE (Option B + Style 2)
+# generator.py — STRICT LITERAL MODE 
 # =========================================================
 
 import os
@@ -88,10 +88,16 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 # =========================================================
-# OPTION B — STRICT TOPIC MATCHING
+# OPTION B — STRICT TOPIC MATCHING (FIXED VERSION)
 # =========================================================
 
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
+    """
+    FIXED VERSION:
+      - No early-return on irrelevant chunks
+      - Accepts ANY chunk that matches lost/stolen or shares lexical tokens
+      - Prevents fraud-only chunk from blocking correct lost/stolen chunk
+    """
     if not chunks:
         return False
 
@@ -101,19 +107,27 @@ def _question_matches_context(question: str, chunks: List[str]) -> bool:
 
     q_lower = question.lower()
 
+    found_match = False
+
     for chunk in chunks:
         c_lower = chunk.lower()
         c_tokens = set(_simple_tokens(chunk))
 
+        # Specific lost/stolen mapping
         if "lost" in q_lower and ("lost" in c_lower or "stolen" in c_lower):
-            return True
+            found_match = True
+            continue
+
         if "stolen" in q_lower and ("stolen" in c_lower or "lost" in c_lower):
-            return True
+            found_match = True
+            continue
 
+        # Generic overlap
         if q_tokens & c_tokens:
-            return True
+            found_match = True
+            continue
 
-    return False
+    return found_match
 
 
 # =========================================================
