@@ -1,22 +1,31 @@
 """
 metrics.py
 ---------------------------------------------------------
-Shared evaluation utilities for grounding, hallucination,
+Unified evaluation utilities for grounding, hallucination,
 and retrieval-quality analysis.
 
-This file mirrors:
-    • generator.py grounding logic
-    • FastAPI hallucination checks
-    • RAG evaluation in Phase 5
+This file now delegates all grounding logic to:
+    • generator.is_grounded
+    • generator.grounding_details
 
-All functions here are safe for both:
-    - Local (Phi-3.5)
-    - Cloud Run (Groq)
+This ensures 100% alignment between:
+    - generator.py (production FastAPI)
+    - evaluate_rag.py (Phase 5 evaluation)
+    - monitoring/analytics (Phase 8)
+
+Safe for:
+    - Local Phi-3.5
+    - Cloud Run Groq
 """
 
 import re
 from typing import List, Dict
 
+# Import the unified grounding logic from generator.py
+from src.generation.generator import (
+    is_grounded as _is_grounded_core,
+    grounding_details as _grounding_details_core,
+)
 
 # =========================================================
 # TOKENIZATION UTILS
@@ -37,11 +46,11 @@ def tokenize(text: str) -> List[str]:
 # =========================================================
 # SIMPLE METRIC: RETRIEVAL HIT
 # =========================================================
-
 def evaluate_retrieval_hit(question: str, retrieved_chunks: List[str], gold_answer: str) -> float:
     """
     Computes token overlap between gold answer and retrieved context.
-    Only used during evaluation, not during generation.
+
+    Independent of grounding logic.
     """
     if not gold_answer or not retrieved_chunks:
         return 0.0
@@ -59,112 +68,63 @@ def evaluate_retrieval_hit(question: str, retrieved_chunks: List[str], gold_answ
 
 
 # =========================================================
-# GROUNDING LOGIC (MIRRORS generator.py)
+# NORMALIZATION UTILITIES FOR "I DON'T KNOW"
 # =========================================================
+def _normalize_idk(text: str) -> str:
+    """
+    Normalizes variants of 'I don't know' for strict evaluation.
 
-_PHONE_RE = re.compile(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b")
-_NUMBER_RE = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
+    Example outputs:
+      "I don't know."  -> "i dont know"
+      "I do not know!" -> "i do not know"
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r"[^a-z\s]", "", text.lower())
+    return " ".join(cleaned.split())
 
+
+# =========================================================
+# UNIFIED GROUNDING — WRAPPERS AROUND GENERATOR LOGIC
+# =========================================================
 def is_grounded(answer: str, chunks: List[str]) -> bool:
     """
-    Determines if a model answer strictly comes from the retrieved context.
-    Mirrors generator.py to maintain consistency.
+    Wrapper around generator.is_grounded.
+    Ensures consistent grounding everywhere.
     """
-    if not answer:
-        return False
-
-    ans = answer.lower().strip()
-
-    # Allow "I don't know."
-    if ans in {"i don't know", "i don't know."}:
-        return True
-
-    if not chunks:
-        return False
-
-    ctx_text = " ".join(chunks).lower()
-
-    # Exact snippet match
-    if ans.rstrip(".") in ctx_text:
-        return True
-
-    # Phone numbers
-    if set(_PHONE_RE.findall(ans)) & set(_PHONE_RE.findall(ctx_text)):
-        return True
-
-    # Numbers (percentages, fees, amounts)
-    if set(_NUMBER_RE.findall(ans)) & set(_NUMBER_RE.findall(ctx_text)):
-        return True
-
-    # Token overlap
-    ans_tokens = tokenize(ans)
-    ctx_tokens = set(tokenize(ctx_text))
-
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
-
-    # Require minimum overlap
-    return len(overlap) >= 2
+    return _is_grounded_core(answer, chunks)
 
 
 def evaluate_grounding(answer: str, chunks: List[str]) -> Dict:
     """
-    Computes:
-      - grounded flag
-      - grounding score (0–1)
-      - context token overlap ratio
+    Wrapper around generator.grounding_details.
+    Returns:
+      - grounded (bool)
+      - grounding_score (0–1)
+      - context_overlap (0–1)
     """
-    if not answer or not chunks:
-        return {
-            "grounded": False,
-            "grounding_score": 0.0,
-            "context_overlap": 0.0,
-        }
-
-    ctx_text = " ".join(chunks).lower()
-    ans_text = answer.lower().rstrip(".")
-
-    ans_tokens = tokenize(ans_text)
-    ctx_tokens = set(tokenize(ctx_text))
-
-    if not ans_tokens:
-        return {
-            "grounded": False,
-            "grounding_score": 0.0,
-            "context_overlap": 0.0,
-        }
-
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
-    overlap_ratio = len(overlap) / max(1, len(ans_tokens))
-
-    grounded_flag = is_grounded(answer, chunks)
-
-    # Weighted score
-    grounding_score = (0.7 * int(grounded_flag)) + (0.3 * overlap_ratio)
-
-    return {
-        "grounded": grounded_flag,
-        "grounding_score": round(float(grounding_score), 4),
-        "context_overlap": round(float(overlap_ratio), 4),
-    }
+    return _grounding_details_core(answer, chunks)
 
 
 # =========================================================
-# HALLUCINATION DETECTION
+# HALLUCINATION DETECTION — UNIFIED LOGIC
 # =========================================================
-
 def detect_hallucination(answer: str, chunks: List[str], q_type: str) -> bool:
     """
-    Final hallucination decision used in evaluation.
+    Unified hallucination logic matching FastAPI + evaluation.
 
     unknown questions:
-        - MUST answer "I don't know."
+        → Must effectively mean "I don't know."
     known questions:
-        - answer must be grounded in context
+        → Must be grounded in context.
     """
-    ans = answer.lower().strip()
+    norm = _normalize_idk(answer)
 
     if q_type == "unknown":
-        return ans not in {"i don't know", "i don't know."}
+        return norm not in {
+            "i dont know",
+            "i do not know",
+        }
 
-    # Known question → Check grounding
-    return not is_grounded(answer, chunks)
+    # Known → must be grounded according to unified logic
+    return not _is_grounded_core(answer, chunks)
