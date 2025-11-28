@@ -1,10 +1,10 @@
-"""
+""" 
 main.py — FastAPI Backend for RAG (Cloud Run + ONNX)
 
 Features:
     • FAISS + ONNX MPNet semantic retrieval
     • Dual-mode generator:
-        - Local Phi-3.5-Mini (Colab training)
+        - Local Phi-3.5-Mini (Colab)
         - Groq-hosted LLMs (Cloud Run)
     • Strict grounding & fallback logic
     • JSONL monitoring logs
@@ -13,6 +13,7 @@ Features:
 import sys
 import os
 import time
+import re
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -20,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Allow src/ imports when running via `uvicorn src.api.main:app`
+# Allow src/ imports when running via uvicorn
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.retrieval.search_engine import RbcRetriever
@@ -29,9 +30,12 @@ from monitoring.rag_logger import log_rag_event
 
 
 # ---------------------------------------------------------
-# Environment variables for Cloud Run mode
+# Environment variables
 # ---------------------------------------------------------
 GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
+
+# Regex to extract CIT:x from generator output
+CIT_PATTERN = re.compile(r"CIT:(\d+)")
 
 
 # ---------------------------------------------------------
@@ -39,14 +43,14 @@ GEN_MODE = os.getenv("GEN_MODE", "local")  # "local" or "groq"
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Retrieval-Augmented Generation using FAISS + ONNX MPNet + Local/Groq LLMs",
+    description="Retrieval-Augmented Generation using FAISS + ONNX MPNet + Phi/Groq LLMs",
     version="9.0.0",
 )
 
-# CORS for Cloudflare tunnel + Streamlit frontend
+# CORS for Streamlit + Cloudflare Tunnel
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # backend is public anyway
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,18 +79,17 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Retrieval Post-Processing
+# Retrieval Post-Processing (Strict Literal Mode)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    Filter and prepare retrieval results for the generator.
+    Return ONLY the text chunks.
 
-    Keeps only chunks with a final_score above the threshold and returns:
-        • chunks:        list of text chunks
-        • citation_ids:  matching citation IDs
+    Citation IDs from retriever are NOT used anymore because the generator
+    attaches CIT:1, CIT:2 ... internally based on chunk order.
     """
     if not results:
-        return [], []
+        return []
 
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
@@ -97,29 +100,23 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
     ]
 
     chunks = [r["chunk"].strip() for r in strong][:max_items]
-    citation_ids = [r["citation_id"] for r in strong][:max_items]
-
-    return chunks, citation_ids
+    return chunks
 
 
 # ---------------------------------------------------------
-# HTML Landing Page
+# Landing Page
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 @app.get("/landing", response_class=HTMLResponse)
 def landing(request: Request):
-    return templates.TemplateResponse(
-        "landing.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse("landing.html", {"request": request})
 
 
 # ---------------------------------------------------------
-# Health Check
+# Health Endpoint
 # ---------------------------------------------------------
 @app.get("/health")
 def health():
-    """Return basic API and model health information."""
     return {
         "status": "ok",
         "record_count": len(retriever.metadata),
@@ -132,23 +129,22 @@ def health():
 
 
 # ---------------------------------------------------------
-# Main RAG Endpoint (with monitoring)
+# Main RAG Endpoint
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
-    query: str = Query(..., description="User's banking question"),
+    query: str = Query(..., description="User's RBC question"),
     top_k: int = Query(5, ge=1, le=10),
 ):
     start_time = time.time()
 
     try:
-        # 1. Retrieval
+        # 1. Retrieve raw candidates
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # 2. Filtered strong matches
-        clean_chunks, citation_ids = clean_retrieval(retrieval_results)
+        # 2. Clean retrieval → ONLY chunks
+        clean_chunks = clean_retrieval(retrieval_results)
 
-        # Fallback: no strong context
         if not clean_chunks:
             latency_ms = (time.time() - start_time) * 1000.0
 
@@ -176,38 +172,42 @@ def ask(
                 "latency_ms": latency_ms,
             }
 
-        # 3. Generation (Phi or Groq)
+        # 3. Generate literal-mode answer
         answer, grounding_info = generate_answer(query, clean_chunks)
+
         grounding_score = grounding_info.get("grounding_score", 0.0)
         context_overlap = grounding_info.get("context_overlap", 0.0)
 
-        # 4. Confidence (from retriever)
+        # 4. Extract CIT:x from the answer itself
+        citations_used = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
+
+        # 5. Confidence (top retrieval score)
         confidence = (
             retrieval_results[0].get("confidence", 0.0)
             if retrieval_results else 0.0
         )
 
-        # 5. Latency
+        # 6. Latency
         latency_ms = (time.time() - start_time) * 1000.0
 
-        # 6. Log event
+        # 7. Log
         log_rag_event(
             query=query,
             answer=answer,
             retrieved=retrieval_results,
             used_chunks=clean_chunks,
-            citations=citation_ids,
+            citations=citations_used,
             grounding_score=grounding_score,
             context_overlap=context_overlap,
             confidence=confidence,
             latency_ms=latency_ms,
         )
 
-        # 7. Response
+        # 8. Response
         return {
             "query": query,
             "answer": answer,
-            "citations_used": citation_ids,
+            "citations_used": citations_used,
             "retrieved": retrieval_results,
             "used_context": clean_chunks,
             "confidence": confidence,
