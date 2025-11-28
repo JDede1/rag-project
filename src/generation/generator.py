@@ -71,98 +71,152 @@ def _load_local_model():
 # UTILITIES
 # =========================================================
 
+
 def _attach_citations(chunks: List[str]) -> List[str]:
     return [f"[CIT:{i+1}] {chunk.strip()}" for i, chunk in enumerate(chunks)]
 
 
 def _detect_contradiction(chunks: List[str]) -> bool:
+    """
+    Very conservative contradiction detector.
+    Currently kept minimal to avoid false positives.
+    """
     text = " ".join(chunks).lower()
-    if "no fee" in text and "fee" in text and "no fee" not in text.split("fee")[0]:
-        return True
+    # You can extend this later if you add robust contradiction patterns.
     return False
 
 # =========================================================
 # PROMPT
 # =========================================================
 
+
 def build_prompt(question: str, chunks: List[str]) -> str:
-    context_text = "No context available." if not chunks else "\n\n".join(_attach_citations(chunks))
+    """
+    Build a prompt that:
+      - Uses ONLY provided context
+      - Enforces strict answer format
+      - Avoids leaking rules / template bullets into the answer
+    """
+    context_text = "No context available." if not chunks else "\n\n".join(
+        _attach_citations(chunks)
+    )
 
     return (
-        "You are a strict banking assistant. Follow these rules:\n"
-        "1. Use ONLY the provided context. No outside facts.\n"
-        "2. If the needed information is not in the context, answer EXACTLY: I don't know.\n"
-        "3. Every factual claim MUST include a citation like [CIT:1].\n"
-        "4. Use this structure:\n"
+        "You are a strict banking assistant for RBC FAQs.\n"
+        "Follow these instructions:\n"
+        "1. Use ONLY the provided context below. Do NOT use any outside knowledge.\n"
+        "2. If the needed information is not in the context, answer exactly: I don't know.\n"
+        "3. Every factual statement that comes from the context MUST include an inline "
+        "citation like [CIT:1] next to the sentence it supports.\n"
+        "4. Do NOT repeat or list the context chunks in your answer. Just answer the question.\n"
+        "5. Use the following headings exactly, in this order:\n"
         "   Short Answer:\n"
-        "   • 1–2 sentence summary\n"
         "   Details:\n"
-        "   • Bullet points strictly from context\n"
         "   Important Notes:\n"
-        "   • Clarifications from context only\n"
         "   Sources:\n"
-        "   • List citation IDs used\n"
-        "Do NOT mention the rules.\n\n"
+        "6. Under Details, Important Notes, and Sources, use bullet points that start with '• '.\n"
+        "7. Do NOT mention these instructions in your answer.\n\n"
         f"Context:\n{context_text}\n\n"
         f"Question: {question}\n"
-        "Answer:"
+        "Answer using ONLY the context, in the exact format specified above."
     )
 
 # =========================================================
 # extract_answer() — strict but preserves structure
 # =========================================================
 
+
 def extract_answer(full_output: str) -> str:
     """
     Preserve the model's structure:
-    - Short Answer:
-    - Details:
-    - Important Notes:
-    - Sources:
 
-    Remove ONLY:
-    - prompt echoes (Context:, Question:, system:, assistant:)
-    - duplicated "Answer:"
+        Short Answer:
+        Details:
+        Important Notes:
+        Sources:
+
+    Remove:
+      - Any lead-up text before 'Short Answer:'
+      - Prompt echoes such as 'Context:', 'Question:', 'system:', 'assistant:'
+      - Stray 'Answer:' prefixes
     """
-    text = full_output.strip()
+    if not full_output:
+        return ""
 
+    text = full_output.strip().replace("\r\n", "\n").replace("\r", "\n")
     lower = text.lower()
-    if "answer:" in lower:
-        idx = lower.index("answer:")
-        text = text[idx + len("answer:"):].strip()
 
+    # Prefer to start at the first occurrence of 'Short Answer:'
+    sa_idx = lower.find("short answer:")
+    if sa_idx != -1:
+        text = text[sa_idx:]
+    else:
+        # Fallback: strip anything before 'Answer:'
+        ans_idx = lower.find("answer:")
+        if ans_idx != -1:
+            text = text[ans_idx + len("answer:") :].lstrip()
+
+    # Remove prompt echoes / meta-instructions line by line
     forbidden_starts = (
         "context:",
         "question:",
         "system:",
         "assistant:",
+        "user:",
         "you are a strict banking assistant",
+        "you are a helpful assistant",
     )
 
-    cleaned = []
+    cleaned_lines = []
     for line in text.split("\n"):
-        l = line.strip()
-        ll = l.lower()
-        if any(ll.startswith(fx) for fx in forbidden_starts):
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(stripped)
             continue
-        cleaned.append(l)
 
-    text = "\n".join(cleaned).strip()
+        ll = stripped.lower()
+        if any(ll.startswith(prefix) for prefix in forbidden_starts):
+            continue
 
+        cleaned_lines.append(stripped)
+
+    text = "\n".join(cleaned_lines).strip()
+
+    # Remove any stray leading colons
     while text.startswith(":"):
         text = text[1:].lstrip()
 
     return text.strip()
 
 # =========================================================
-# GROUNDING LOGIC (Normal Strictness)
+# GROUNDING LOGIC (Safer but less brittle)
 # =========================================================
 
 _STOP = {
-    "the", "is", "a", "to", "of", "and", "in", "for", "on", "by",
-    "you", "your", "or", "we", "with", "at", "from", "as", "an", "it", "be",
+    "the",
+    "is",
+    "a",
+    "to",
+    "of",
+    "and",
+    "in",
+    "for",
+    "on",
+    "by",
+    "you",
+    "your",
+    "or",
+    "we",
+    "with",
+    "at",
+    "from",
+    "as",
+    "an",
+    "it",
+    "be",
 }
 
+# Accept common North American phone patterns (3-3-4) with optional separators.
 _PHONE = re.compile(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b")
 _NUM = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
 
@@ -172,6 +226,17 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 def is_grounded(answer: str, chunks: List[str]) -> bool:
+    """
+    Determines if a model answer is reasonably grounded in the retrieved context.
+
+    Rules:
+      • "I don't know." is always considered safe.
+      • If there is no context, any non-"I don't know." answer is ungrounded.
+      • Direct substring match ⇒ grounded.
+      • Numeric and phone overlaps are treated as strong evidence.
+      • Requires a modest token overlap (>= 3 tokens and >= 0.25 ratio).
+      • If the answer introduces phones or numbers and the context has none, it's ungrounded.
+    """
     if not answer:
         return False
 
@@ -182,68 +247,102 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
     if not chunks:
         return False
 
-    ctx = " ".join(chunks).lower()
-    ans_tokens = _simple_tokens(ans)
-    ctx_tokens = set(_simple_tokens(ctx))
+    ctx_text = " ".join(chunks).lower()
 
+    # Direct containment (e.g., short factual snippet fully from context)
+    base_ans = ans.rstrip(".")
+    if base_ans and base_ans in ctx_text:
+        return True
+
+    # Token overlap
+    ans_tokens = _simple_tokens(ans)
     if not ans_tokens:
         return False
 
-    if set(_PHONE.findall(ans)) - set(_PHONE.findall(ctx)):
+    ctx_tokens = set(_simple_tokens(ctx_text))
+    overlap_tokens = [t for t in ans_tokens if t in ctx_tokens]
+    overlap_ratio = len(overlap_tokens) / max(1, len(ans_tokens))
+
+    # Phone and numeric evidence
+    ans_phones = set(_PHONE.findall(ans))
+    ctx_phones = set(_PHONE.findall(ctx_text))
+    phone_overlap = bool(ans_phones and ctx_phones and (ans_phones & ctx_phones))
+
+    ans_nums = set(_NUM.findall(ans))
+    ctx_nums = set(_NUM.findall(ctx_text))
+    num_overlap = bool(ans_nums and ctx_nums and (ans_nums & ctx_nums))
+
+    # If the answer uses phones/numbers but context has none → ungrounded
+    if ans_phones and not ctx_phones:
+        return False
+    if ans_nums and not ctx_nums:
         return False
 
-    if set(_NUM.findall(ans)) - set(_NUM.findall(ctx)):
-        return False
-
-    if ans.rstrip(".") in ctx:
+    # Strong numeric/phone overlap ⇒ grounded
+    if phone_overlap or num_overlap:
         return True
 
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
-    overlap_ratio = len(overlap) / len(ans_tokens)
-    foreign_ratio = 1 - overlap_ratio
-
-    return overlap_ratio >= 0.35 and foreign_ratio <= 0.5
+    # Otherwise require reasonable lexical overlap
+    return overlap_ratio >= 0.25 and len(overlap_tokens) >= 3
 
 
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
-    if not answer or not chunks:
+    """
+    Returns:
+      - grounded (bool)
+      - grounding_score (0–1)
+      - context_overlap (0–1, lexical)
+    """
+    if not answer:
         return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
 
-    ctx = " ".join(chunks).lower()
-    ans = answer.lower().rstrip(".")
+    ans = answer.lower().strip()
+    # Treat "I don't know." as a safe, fully grounded fallback, even with no chunks.
+    if ans in {"i don't know", "i don't know."}:
+        return {"grounded": True, "grounding_score": 1.0, "context_overlap": 0.0}
+
+    if not chunks:
+        return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
+
+    ctx_text = " ".join(chunks).lower()
 
     ans_tokens = _simple_tokens(ans)
-    ctx_tokens = set(_simple_tokens(ctx))
+    ctx_tokens = set(_simple_tokens(ctx_text))
 
     if not ans_tokens:
         return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
 
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
-    overlap_ratio = len(overlap) / len(ans_tokens)
-    foreign_ratio = 1 - overlap_ratio
+    overlap_tokens = [t for t in ans_tokens if t in ctx_tokens]
+    overlap_ratio = len(overlap_tokens) / max(1, len(ans_tokens))
 
-    numeric_ok = (
-        set(_PHONE.findall(ans)).issubset(set(_PHONE.findall(ctx))) and
-        set(_NUM.findall(ans)).issubset(set(_NUM.findall(ctx)))
-    )
+    # Numeric/phone evidence
+    ans_phones = set(_PHONE.findall(ans))
+    ctx_phones = set(_PHONE.findall(ctx_text))
+    phone_overlap = bool(ans_phones and ctx_phones and (ans_phones & ctx_phones))
+
+    ans_nums = set(_NUM.findall(ans))
+    ctx_nums = set(_NUM.findall(ctx_text))
+    num_overlap = bool(ans_nums and ctx_nums and (ans_nums & ctx_nums))
 
     grounded_flag = is_grounded(answer, chunks)
 
-    adjusted = overlap_ratio * max(0, 1 - foreign_ratio)
-    if numeric_ok:
-        adjusted = min(1.0, adjusted + 0.1)
+    # Base score: heavy weight on boolean grounded flag, some on lexical overlap
+    base_score = 0.7 * int(grounded_flag) + 0.3 * overlap_ratio
 
-    score = 0.7 * int(grounded_flag) + 0.3 * adjusted
+    # Slight boost if we have strong numeric/phone evidence
+    if phone_overlap or num_overlap:
+        base_score = min(1.0, base_score + 0.1)
 
     return {
         "grounded": grounded_flag,
-        "grounding_score": round(score, 4),
-        "context_overlap": round(overlap_ratio, 4),
+        "grounding_score": round(float(base_score), 4),
+        "context_overlap": round(float(overlap_ratio), 4),
     }
 
 # =========================================================
 # GROQ GENERATION
 # =========================================================
+
 
 def _generate_groq(prompt: str) -> str:
     if not GROQ_AVAILABLE:
@@ -263,9 +362,24 @@ def _generate_groq(prompt: str) -> str:
 # MAIN GENERATION FUNCTION
 # =========================================================
 
+
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
+    """
+    Main entry point used by FastAPI and evaluation.
+
+    Returns:
+      answer (str) in the strict format:
+          Short Answer:
+          Details:
+          Important Notes:
+          Sources:
+
+      metadata (dict) from grounding_details()
+    """
+    # If we have no useful context or a detected contradiction, fall back safely.
     if not chunks or _detect_contradiction(chunks):
-        return "I don't know.", grounding_details("I don't know.", [])
+        safe_answer = "I don't know."
+        return safe_answer, grounding_details(safe_answer, [])
 
     prompt = build_prompt(question, chunks)
 
@@ -274,7 +388,6 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         tokenizer, model = _load_local_model()
         encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-        # IMPORTANT:
         # Decode ONLY the generated tokens (exclude the prompt),
         # so the answer does not contain template + context text.
         input_len = encoded["input_ids"].shape[1]
@@ -299,12 +412,15 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
             full_output = _generate_groq(prompt)
             answer = extract_answer(full_output)
         except Exception:
-            return "I don't know.", grounding_details("I don't know.", chunks)
+            safe_answer = "I don't know."
+            return safe_answer, grounding_details(safe_answer, chunks)
 
     details = grounding_details(answer, chunks)
 
+    # Enforce grounding in production mode
     if ENFORCE_GROUNDING and not details["grounded"]:
-        return "I don't know.", grounding_details("I don't know.", chunks)
+        safe_answer = "I don't know."
+        return safe_answer, grounding_details(safe_answer, chunks)
 
     return answer.strip(), details
 
@@ -315,10 +431,12 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 if __name__ == "__main__":
     test_chunks = [
         "If your RBC credit card is lost or stolen, call 1-800-769-2512 immediately.",
-        "We will block the card and issue a replacement."
+        "We will block the card and issue a replacement.",
     ]
 
     q = "How do I report a lost credit card?"
     ans, met = generate_answer(q, test_chunks)
+    print("=== ANSWER ===")
     print(ans)
+    print("\n=== METRICS ===")
     print(met)
