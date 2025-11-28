@@ -4,10 +4,10 @@ main.py — FastAPI Backend for Production RAG (Cloud Run + ONNX)
 Features:
     • FAISS + ONNX MPNet semantic retrieval
     • Strict literal-mode generator (Phi or Groq)
-    • Strict topic matching 
-    • Domain-specific intent filtering 
+    • Option B topic matching (lexical + domain hints)
+    • Semantic intent filtering (fraud/lost/cancel/general)
     • Strict grounding enforcement
-    • JSONL monitoring logs
+    • JSONL monitoring logs  (monitoring/rag_logger.py)
 """
 
 import sys
@@ -21,9 +21,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Allow src/ imports when running via uvicorn
+# Required: allow src/ imports when running via uvicorn
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# Internal imports
 from src.retrieval.search_engine import RbcRetriever
 from src.generation.generator import generate_answer
 from monitoring.rag_logger import log_rag_event
@@ -41,7 +42,7 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)")
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Strict Literal RBC Banking RAG using FAISS + ONNX MPNet + Phi/Groq",
+    description="Strict Literal RBC RAG using FAISS + ONNX MPNet + Phi/Groq",
     version="11.0.0",
 )
 
@@ -68,7 +69,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 # ---------------------------------------------------------
-# Load Retriever
+# Load Retriever (global)
 # ---------------------------------------------------------
 print("Loading retriever...")
 retriever = RbcRetriever()
@@ -76,16 +77,21 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Intent detection (Option B)
+# Intent Detection (semantic grouping)
 # ---------------------------------------------------------
 def _intent(chunk: str) -> str:
-    """Assign a simple intent label to each chunk."""
+    """
+    Assign a coarse-grained semantic intent category to a chunk.
+    Used to enforce stricter context consistency (Option B).
+    """
     c = chunk.lower()
 
     if "fraud" in c or "fraudulent" in c:
         return "fraud"
+
     if "lost" in c or "stolen" in c:
         return "lost"
+
     if "cancel" in c or "cancelling" in c:
         return "cancel"
 
@@ -93,26 +99,31 @@ def _intent(chunk: str) -> str:
 
 
 # ---------------------------------------------------------
-# Retrieval Post-Processing (Strict + Consistent)
+# Retrieval Post-Processing (Option B)
 # ---------------------------------------------------------
-def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
+def clean_retrieval(
+    results: list,
+    score_threshold: float = 0.32,
+    max_items: int = 4,
+):
     """
-    Updated to Option B:
-    1. Sort by final score
-    2. Filter out low-scoring chunks
-    3. Detect dominant semantic intent
-    4. Keep only chunks from the same intent family
+    Option B post-processing:
+        1. Sort by final_score
+        2. Keep only strong-scoring chunks
+        3. Detect dominant intent category
+        4. Filter to keep chunks ONLY from that intent group
     """
 
     if not results:
         return []
 
-    # 1. Sort
+    # 1. Sort by final score
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
-    # 2. Strong chunks only
+    # 2. Strong chunks
     strong = [
-        r for r in ordered
+        r
+        for r in ordered
         if r.get("final_score", 0.0) >= score_threshold
         and isinstance(r.get("chunk"), str)
     ]
@@ -120,14 +131,14 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
     if not strong:
         return []
 
-    # 3. Intent classification on strong chunks
+    # 3. Intent classification
     intents = [_intent(r["chunk"]) for r in strong]
-    dominant_intent = intents[0]  # top-1 intent = dominant intent
+    dominant_intent = intents[0]  # best-scoring chunk determines category
 
-    # 4. Keep chunks belonging to the dominant intent
+    # 4. Keep only chunks matching the dominant category
     filtered = [r for r in strong if _intent(r["chunk"]) == dominant_intent]
 
-    # Safety net
+    # If filtering removes everything (rare), fall back to strong
     if not filtered:
         filtered = strong
 
@@ -167,17 +178,22 @@ def ask(
     query: str = Query(..., description="User's RBC banking question"),
     top_k: int = Query(5, ge=1, le=10),
 ):
-    start = time.time()
+    start_time = time.time()
 
     try:
-        # 1. RETRIEVAL
+        # -------------------------------------------------
+        # 1. SEMANTIC RETRIEVAL
+        # -------------------------------------------------
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # 2. CLEANED CONTEXT (Option B + strict literal)
+        # -------------------------------------------------
+        # 2. OPTION B CONTEXT FILTERING
+        # -------------------------------------------------
         clean_chunks = clean_retrieval(retrieval_results)
 
+        # No usable context → safe fallback
         if not clean_chunks:
-            latency = (time.time() - start) * 1000
+            latency = (time.time() - start_time) * 1000
             safe = "I don't know."
 
             log_rag_event(
@@ -204,21 +220,29 @@ def ask(
                 "latency_ms": latency,
             }
 
-        # 3. GENERATE STRICT LITERAL ANSWER
+        # -------------------------------------------------
+        # 3. LLM GENERATION (strict literal mode)
+        # -------------------------------------------------
         answer, grounding = generate_answer(query, clean_chunks)
 
         grounding_score = grounding.get("grounding_score", 0.0)
         context_overlap = grounding.get("context_overlap", 0.0)
 
-        # 4. Extract citations
+        # -------------------------------------------------
+        # 4. Extract inline CIT:x references
+        # -------------------------------------------------
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
+        # -------------------------------------------------
         # 5. Retriever confidence
+        # -------------------------------------------------
         confidence = retrieval_results[0].get("confidence", 0.0)
 
-        latency = (time.time() - start) * 1000
+        latency = (time.time() - start_time) * 1000
 
-        # 6. Log event
+        # -------------------------------------------------
+        # 6. Log JSONL event for monitoring
+        # -------------------------------------------------
         log_rag_event(
             query=query,
             answer=answer,
@@ -231,7 +255,9 @@ def ask(
             latency_ms=latency,
         )
 
-        # 7. Return
+        # -------------------------------------------------
+        # 7. Return full API response
+        # -------------------------------------------------
         return {
             "query": query,
             "answer": answer,
@@ -245,7 +271,7 @@ def ask(
         }
 
     except Exception as e:
-        latency = (time.time() - start) * 1000
+        latency = (time.time() - start_time) * 1000
         safe = "I don't know."
 
         log_rag_event(
