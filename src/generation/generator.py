@@ -16,7 +16,7 @@ USE_GROQ = GEN_MODE == "groq"
 
 GROQ_MODEL = "llama3-8b-8192"
 
-# NEW — evaluation override
+# Evaluation / production switch
 ENFORCE_GROUNDING = os.getenv("ENFORCE_GROUNDING", "true").lower().strip() == "true"
 
 if USE_LOCAL:
@@ -43,6 +43,7 @@ if USE_GROQ:
 
 _tokenizer = None
 _model = None
+
 
 def _load_local_model():
     global _tokenizer, _model
@@ -112,6 +113,17 @@ def build_prompt(question: str, chunks: List[str]) -> str:
 # =========================================================
 
 def extract_answer(full_output: str) -> str:
+    """
+    Preserve the model's structure:
+    - Short Answer:
+    - Details:
+    - Important Notes:
+    - Sources:
+
+    Remove ONLY:
+    - prompt echoes (Context:, Question:, system:, assistant:)
+    - duplicated "Answer:"
+    """
     text = full_output.strip()
 
     lower = text.lower()
@@ -120,8 +132,11 @@ def extract_answer(full_output: str) -> str:
         text = text[idx + len("answer:"):].strip()
 
     forbidden_starts = (
-        "context:", "question:", "system:", "assistant:",
-        "you are a strict banking assistant"
+        "context:",
+        "question:",
+        "system:",
+        "assistant:",
+        "you are a strict banking assistant",
     )
 
     cleaned = []
@@ -144,15 +159,17 @@ def extract_answer(full_output: str) -> str:
 # =========================================================
 
 _STOP = {
-    "the","is","a","to","of","and","in","for","on","by",
-    "you","your","or","we","with","at","from","as","an","it","be",
+    "the", "is", "a", "to", "of", "and", "in", "for", "on", "by",
+    "you", "your", "or", "we", "with", "at", "from", "as", "an", "it", "be",
 }
 
 _PHONE = re.compile(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b")
 _NUM = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
 
+
 def _simple_tokens(text: str) -> List[str]:
     return [t for t in re.findall(r"\w+", text.lower()) if t not in _STOP]
+
 
 def is_grounded(answer: str, chunks: List[str]) -> bool:
     if not answer:
@@ -203,7 +220,6 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
     overlap = [t for t in ans_tokens if t in ctx_tokens]
     overlap_ratio = len(overlap) / len(ans_tokens)
-
     foreign_ratio = 1 - overlap_ratio
 
     numeric_ok = (
@@ -253,9 +269,15 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
     prompt = build_prompt(question, chunks)
 
+    # Local Phi (Colab / dev)
     if USE_LOCAL:
         tokenizer, model = _load_local_model()
         encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+        # IMPORTANT:
+        # Decode ONLY the generated tokens (exclude the prompt),
+        # so the answer does not contain template + context text.
+        input_len = encoded["input_ids"].shape[1]
 
         with torch.no_grad():
             out = model.generate(
@@ -267,9 +289,11 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
                 repetition_penalty=1.05,
             )
 
-        full_output = tokenizer.decode(out[0], skip_special_tokens=True)
+        generated_ids = out[0][input_len:]
+        full_output = tokenizer.decode(generated_ids, skip_special_tokens=True)
         answer = extract_answer(full_output)
 
+    # Groq (Cloud Run)
     else:
         try:
             full_output = _generate_groq(prompt)
@@ -277,9 +301,6 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         except Exception:
             return "I don't know.", grounding_details("I don't know.", chunks)
 
-    # =========================================================
-    # FINAL SAFETY GATE — now controlled by ENFORCE_GROUNDING
-    # =========================================================
     details = grounding_details(answer, chunks)
 
     if ENFORCE_GROUNDING and not details["grounded"]:
