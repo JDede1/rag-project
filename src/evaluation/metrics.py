@@ -4,31 +4,29 @@ metrics.py
 Unified evaluation utilities for grounding, hallucination,
 and retrieval-quality analysis.
 
-This file now delegates all grounding logic to:
-    • generator.is_grounded
-    • generator.grounding_details
+100% aligned with:
+    - generator.py   (is_grounded, grounding_details)
+    - evaluate_rag.py
+    - FastAPI backend /ask
+    - Phase 8 monitoring dashboards
 
-This ensures 100% alignment between:
-    - generator.py (production FastAPI)
-    - evaluate_rag.py (Phase 5 evaluation)
-    - monitoring/analytics (Phase 8)
-
-Safe for:
-    - Local Phi-3.5
-    - Cloud Run Groq
+This ensures:
+    • No evaluation/back-end drift
+    • No duplicate grounding logic
+    • Strict literal-mode behavior everywhere
 """
 
 import re
 from typing import List, Dict
 
-# Import the unified grounding logic from generator.py
+# Import PRODUCTION grounding logic directly
 from src.generation.generator import (
     is_grounded as _is_grounded_core,
     grounding_details as _grounding_details_core,
 )
 
 # =========================================================
-# TOKENIZATION UTILS
+# TOKENIZATION UTILS (for retrieval-hit metric only)
 # =========================================================
 
 STOPWORDS = {
@@ -44,13 +42,14 @@ def tokenize(text: str) -> List[str]:
 
 
 # =========================================================
-# SIMPLE METRIC: RETRIEVAL HIT
+# SIMPLE RETRIEVAL-HIT METRIC
+# (Independent of grounding logic)
 # =========================================================
+
 def evaluate_retrieval_hit(question: str, retrieved_chunks: List[str], gold_answer: str) -> float:
     """
-    Computes token overlap between gold answer and retrieved context.
-
-    Independent of grounding logic.
+    Token-overlap between gold answer and retrieved context.
+    Used only as a light diagnostic for retrieval quality.
     """
     if not gold_answer or not retrieved_chunks:
         return 0.0
@@ -68,15 +67,17 @@ def evaluate_retrieval_hit(question: str, retrieved_chunks: List[str], gold_answ
 
 
 # =========================================================
-# NORMALIZATION UTILITIES FOR "I DON'T KNOW"
+# NORMALIZED “I DON’T KNOW” UTILITY
+# (Used by evaluation + monitoring)
 # =========================================================
+
 def _normalize_idk(text: str) -> str:
     """
-    Normalizes variants of 'I don't know' for strict evaluation.
-
-    Example outputs:
-      "I don't know."  -> "i dont know"
-      "I do not know!" -> "i do not know"
+    Robust normalization for IDK variants:
+        "I don't know."
+        "I don’t know"
+        "I do not know!"
+        "i dont KNOW??"
     """
     if not text:
         return ""
@@ -85,38 +86,45 @@ def _normalize_idk(text: str) -> str:
 
 
 # =========================================================
-# UNIFIED GROUNDING — WRAPPERS AROUND GENERATOR LOGIC
+# UNIFIED GROUNDING — DIRECT DELEGATION
 # =========================================================
+
 def is_grounded(answer: str, chunks: List[str]) -> bool:
     """
-    Wrapper around generator.is_grounded.
-    Ensures consistent grounding everywhere.
+    Delegates all grounding logic to generator.is_grounded.
+    NO evaluation-specific logic here.
     """
     return _is_grounded_core(answer, chunks)
 
 
 def evaluate_grounding(answer: str, chunks: List[str]) -> Dict:
     """
-    Wrapper around generator.grounding_details.
+    Delegates to generator.grounding_details.
     Returns:
-      - grounded (bool)
-      - grounding_score (0–1)
-      - context_overlap (0–1)
+        grounded (bool)
+        grounding_score (0–1)
+        context_overlap (0–1)
     """
     return _grounding_details_core(answer, chunks)
 
 
 # =========================================================
-# HALLUCINATION DETECTION — UNIFIED LOGIC
+# UNIFIED HALLUCINATION LOGIC
+# EXACTLY matches evaluate_rag.py + FastAPI
 # =========================================================
+
 def detect_hallucination(answer: str, chunks: List[str], q_type: str) -> bool:
     """
-    Unified hallucination logic matching FastAPI + evaluation.
+    For consistency across:
+        • /ask endpoint
+        • evaluate_rag.py
+        • Phase 8 monitoring
 
     unknown questions:
-        → Must effectively mean "I don't know."
+        MUST effectively answer “I don’t know.”
+
     known questions:
-        → Must be grounded in context.
+        MUST satisfy grounding rules.
     """
     norm = _normalize_idk(answer)
 
@@ -126,5 +134,5 @@ def detect_hallucination(answer: str, chunks: List[str], q_type: str) -> bool:
             "i do not know",
         }
 
-    # Known → must be grounded according to unified logic
+    # Known → must be grounded
     return not _is_grounded_core(answer, chunks)
