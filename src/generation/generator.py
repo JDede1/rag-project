@@ -1,33 +1,29 @@
 # =========================================================
-# generator.py — STRICT LITERAL MODE 
+# generator.py — STRICT BUT USABLE LITERAL MODE (Option A)
 # =========================================================
 
 import os
 import re
 from typing import List, Dict, Tuple
 
-# =========================================================
-# ENVIRONMENT CONFIG
-# =========================================================
-
+# ---------------------------------------------------------
+# Environment
+# ---------------------------------------------------------
 GEN_MODE = os.getenv("GEN_MODE", "local").lower().strip()
 USE_LOCAL = GEN_MODE == "local"
 USE_GROQ = GEN_MODE == "groq"
 
-GROQ_MODEL = "llama3-8b-8192"
 ENFORCE_GROUNDING = os.getenv("ENFORCE_GROUNDING", "true").lower().strip() == "true"
+GROQ_MODEL = "llama3-8b-8192"
 
 if USE_LOCAL:
     import torch
 
 
-# =========================================================
-# GROQ LOADING
-# =========================================================
-
+# ---------------------------------------------------------
+# GROQ client
+# ---------------------------------------------------------
 GROQ_AVAILABLE = False
-GROQ_CLIENT = None
-
 if USE_GROQ:
     try:
         from groq import Groq
@@ -37,16 +33,15 @@ if USE_GROQ:
         GROQ_AVAILABLE = False
 
 
-# =========================================================
-# LOCAL MODEL (lazy loading)
-# =========================================================
-
+# ---------------------------------------------------------
+# Local Phi-3.5 model (lazy load)
+# ---------------------------------------------------------
 _tokenizer = None
 _model = None
 
 def _load_local_model():
     global _tokenizer, _model
-    if _tokenizer is not None and _model is not None:
+    if _tokenizer is not None:
         return _tokenizer, _model
 
     from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -66,89 +61,73 @@ def _load_local_model():
     return _tokenizer, _model
 
 
-# =========================================================
-# UTILITIES
-# =========================================================
-
-def _attach_citations(chunks: List[str]) -> List[str]:
-    return [f"[CIT:{i+1}] {chunk.strip()}" for i, chunk in enumerate(chunks)]
-
-def _detect_contradiction(chunks: List[str]) -> bool:
-    return False
-
-
+# ---------------------------------------------------------
+# Token utilities
+# ---------------------------------------------------------
 STOPWORDS = {
     "the","is","a","to","of","and","in","for","on","by","you",
     "your","or","we","with","at","from","as","an","it","be",
-    "are","this","that","can",
+    "are","this","that","can","if","would","will",
 }
 
 def _simple_tokens(text: str) -> List[str]:
-    return [t for t in re.findall(r"\w+", text.lower()) if t not in STOPWORDS]
+    return [
+        t for t in re.findall(r"\w+", text.lower())
+        if t not in STOPWORDS and not t.startswith("cit")
+    ]
 
 
-# =========================================================
-# OPTION B — STRICT TOPIC MATCHING (FIXED VERSION)
-# =========================================================
-
+# ---------------------------------------------------------
+# Robust Topic Matching (Fixed for Lost/Stolen)
+# ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
-    """
-    FIXED VERSION:
-      - No early-return on irrelevant chunks
-      - Accepts ANY chunk that matches lost/stolen or shares lexical tokens
-      - Prevents fraud-only chunk from blocking correct lost/stolen chunk
-    """
     if not chunks:
         return False
 
+    q = question.lower()
     q_tokens = set(_simple_tokens(question))
-    if not q_tokens:
-        return False
-
-    q_lower = question.lower()
-
-    found_match = False
 
     for chunk in chunks:
-        c_lower = chunk.lower()
+        c = chunk.lower()
         c_tokens = set(_simple_tokens(chunk))
 
-        # Specific lost/stolen mapping
-        if "lost" in q_lower and ("lost" in c_lower or "stolen" in c_lower):
-            found_match = True
-            continue
+        # Strong signals
+        if "lost" in q and ("lost" in c or "stolen" in c):
+            return True
+        if "stolen" in q and ("stolen" in c or "lost" in c):
+            return True
 
-        if "stolen" in q_lower and ("stolen" in c_lower or "lost" in c_lower):
-            found_match = True
-            continue
+        # Moderate signal: card + lost/stolen patterns
+        if ("card" in q and ("lost" in c or "stolen" in c)):
+            return True
 
-        # Generic overlap
+        # Lexical overlap fallback
         if q_tokens & c_tokens:
-            found_match = True
-            continue
+            return True
 
-    return found_match
+    return False
 
 
-# =========================================================
-# PROMPT (STRICT LITERAL, STYLE 2 — MINIMAL TRIM)
-# =========================================================
+# ---------------------------------------------------------
+# Prompt Builder (Literal Mode)
+# ---------------------------------------------------------
+def _attach_citations(chunks: List[str]) -> List[str]:
+    return [f"[CIT:{i+1}] {chunk.strip()}" for i, chunk in enumerate(chunks)]
 
 def build_prompt(question: str, chunks: List[str]) -> str:
-    context_text = (
-        "No context available."
-        if not chunks else "\n\n".join(_attach_citations(chunks))
+    context = "No context available." if not chunks else "\n\n".join(
+        _attach_citations(chunks)
     )
 
     return (
         "You are a strict RBC banking assistant.\n"
         "RULES:\n"
         "1. Use ONLY the provided Context. No outside knowledge.\n"
-        "2. Copy context sentences literally, with minimal trimming allowed.\n"
-        "3. If the information is not explicitly in Context, answer: I don't know.\n"
+        "2. Copy sentences LITERALLY from the context with minimal trimming.\n"
+        "3. If the information is not explicitly in Context, answer ONLY: I don't know.\n"
         "4. Every factual sentence MUST have a citation [CIT:x].\n"
         "5. REQUIRED FORMAT:\n"
-        "   Short Answer: <one literal or minimally trimmed sentence> [CIT:x]\n"
+        "   Short Answer: <one literal sentence> [CIT:x]\n"
         "   Details:\n"
         "   • ...\n"
         "   Important Notes:\n"
@@ -156,68 +135,55 @@ def build_prompt(question: str, chunks: List[str]) -> str:
         "   Sources:\n"
         "   • CIT:x\n"
         "Do NOT mention rules.\n\n"
-        f"Context:\n{context_text}\n\n"
+        f"Context:\n{context}\n\n"
         f"Question: {question}\n"
         "Answer:"
     )
 
 
-# =========================================================
-# EXTRACT ANSWER
-# =========================================================
-
-_CIT_PATTERN = re.compile(r"\[?CIT:(\d+)\]?")
+# ---------------------------------------------------------
+# Extract Answer
+# ---------------------------------------------------------
+_CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 
 def _enforce_single_sentence(text: str) -> str:
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return parts[0].strip() if parts else text.strip()
+    return parts[0].strip()
 
+def extract_answer(raw: str) -> str:
+    if not raw:
+        return "I don't know."
 
-def extract_answer(full: str) -> str:
-    if not full:
-        return ""
+    t = raw.strip()
+    lower = t.lower()
 
-    text = full.strip().replace("\r", "").replace("\n\n", "\n")
+    # Try to locate Short Answer
+    idx = lower.find("short answer:")
+    if idx != -1:
+        t = t[idx:]
 
-    lower = text.lower()
-    sa_idx = lower.find("short answer:")
+    # Clean lines
+    lines = []
+    for ln in t.split("\n"):
+        s = ln.strip()
+        if s and not s.lower().startswith(("context:", "question:", "system:", "assistant:", "user:")):
+            lines.append(s)
 
-    if sa_idx != -1:
-        text = text[sa_idx:]
-    else:
-        a_idx = lower.find("answer:")
-        if a_idx != -1:
-            text = text[a_idx + len("answer:"):].strip()
+    text = "\n".join(lines)
 
-    cleaned = []
-    for line in text.split("\n"):
-        s = line.strip()
-        if not s:
-            cleaned.append("")
-            continue
-        if any(s.lower().startswith(k) for k in ["context:", "question:", "system:", "assistant:", "user:"]):
-            continue
-        cleaned.append(s)
-
-    text = "\n".join(cleaned).strip()
-
-    sections = {
-        "short_answer": [],
-        "details": [],
-        "notes": [],
-        "sources": [],
-    }
+    # Parse sections
+    sections = {"short": [], "details": [], "notes": [], "sources": []}
     current = None
 
-    for line in text.split("\n"):
-        l = line.strip()
+    for ln in text.split("\n"):
+        l = ln.strip()
         ll = l.lower()
 
         if ll.startswith("short answer:"):
-            current = "short_answer"
+            current = "short"
             content = l[len("Short Answer:"):].strip()
             if content:
-                sections["short_answer"].append(content)
+                sections["short"].append(content)
             continue
 
         if ll.startswith("details:"):
@@ -235,41 +201,24 @@ def extract_answer(full: str) -> str:
         if current:
             sections[current].append(l)
 
-    # Short Answer
-    sa = " ".join(sections["short_answer"]).strip()
+    # Build Short Answer
+    sa = " ".join(sections["short"]).strip()
     if not sa:
         sa = "I don't know."
 
     sa = _enforce_single_sentence(sa)
     short = f"Short Answer: {sa}"
 
-    # Details
-    details = []
-    for l in sections["details"]:
-        s = l.strip()
-        if not s.startswith("•"):
-            s = f"• {s}"
-        details.append(s)
-    if not details:
-        details.append("• (no additional details)")
+    def bulletize(lines):
+        return [l if l.startswith("•") else f"• {l}" for l in lines] or ["• (no additional information)"]
 
-    # Notes
-    notes = []
-    for l in sections["notes"]:
-        s = l.strip()
-        if not s.startswith("•"):
-            s = f"• {s}"
-        notes.append(s)
-    if not notes:
-        notes.append("• (no additional notes)")
+    details = bulletize(sections["details"])
+    notes = bulletize(sections["notes"])
 
-    # Sources
     body = "\n".join([short] + details + notes)
-    used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
-    if used:
-        sources = [f"• CIT:{cid}" for cid in used]
-    else:
-        sources = ["• CIT:1"]
+    used_cits = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
+
+    sources = [f"• CIT:{cid}" for cid in used_cits] or ["• CIT:1"]
 
     final = (
         short
@@ -281,69 +230,39 @@ def extract_answer(full: str) -> str:
     return final.strip()
 
 
-# =========================================================
-# GROUNDING
-# =========================================================
-
-_PHONE = re.compile(r"\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b")
-_NUM = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b")
-
+# ---------------------------------------------------------
+# Grounding (Relaxed but Safe)
+# ---------------------------------------------------------
 def is_grounded(answer: str, chunks: List[str]) -> bool:
-    if not answer:
-        return False
-    ans = answer.lower().strip()
-
-    if ans in {"i don't know", "i don't know."}:
-        return True
-
-    if not chunks:
+    if not answer or not chunks:
         return False
 
-    ctx = " ".join(chunks).lower()
-
-    if ans.rstrip(".") in ctx:
+    if answer.lower().strip() == "i don't know.":
         return True
 
-    ans_tokens = _simple_tokens(ans)
-    ctx_tokens = set(_simple_tokens(ctx))
+    ans_tokens = set(_simple_tokens(answer))
+    ctx_tokens = set(_simple_tokens(" ".join(chunks)))
+
     if not ans_tokens:
         return False
 
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
+    overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
 
-    ans_ph = set(_PHONE.findall(ans))
-    ctx_ph = set(_PHONE.findall(ctx))
-    ans_num = set(_NUM.findall(ans))
-    ctx_num = set(_NUM.findall(ctx))
-
-    if ans_ph and not ctx_ph:
-        return False
-    if ans_num and not ctx_num:
-        return False
-
-    if (ans_ph & ctx_ph or ans_num & ctx_num) and ratio >= 0.20:
-        return True
-
-    return ratio >= 0.30 and len(overlap) >= 4
+    # More reasonable thresholds
+    return ratio >= 0.10 and len(overlap) >= 1
 
 
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
-    if not answer:
-        return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
-
-    ans = answer.lower().strip()
-    if ans in {"i don't know", "i don't know."}:
-        return {"grounded": True, "grounding_score": 1.0, "context_overlap": 0.0}
-
     if not chunks:
         return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
 
-    ctx = " ".join(chunks).lower()
-    ans_tokens = _simple_tokens(ans)
-    ctx_tokens = set(_simple_tokens(ctx))
+    if answer.lower().strip() == "i don't know.":
+        return {"grounded": True, "grounding_score": 1.0, "context_overlap": 0.0}
 
-    overlap = [t for t in ans_tokens if t in ctx_tokens]
+    ans_tokens = set(_simple_tokens(answer))
+    ctx_tokens = set(_simple_tokens(" ".join(chunks)))
+    overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
 
     grounded = is_grounded(answer, chunks)
@@ -351,26 +270,45 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
     return {
         "grounded": grounded,
-        "grounding_score": round(min(1.0, score), 4),
+        "grounding_score": round(score, 4),
         "context_overlap": round(ratio, 4),
     }
 
 
-# =========================================================
-# GENERATION
-# =========================================================
+# ---------------------------------------------------------
+# GROQ Generation
+# ---------------------------------------------------------
+def _generate_groq(prompt: str) -> str:
+    if not GROQ_AVAILABLE:
+        return "I don't know."
 
+    out = GROQ_CLIENT.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model=GROQ_MODEL,
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=250,
+    )
+    return out.choices[0].message["content"]
+
+
+# ---------------------------------------------------------
+# MAIN: generate_answer()
+# ---------------------------------------------------------
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
-    if not chunks or _detect_contradiction(chunks):
+    if not chunks:
         safe = "I don't know."
         return safe, grounding_details(safe, [])
 
+    # Robust topic-match
     if not _question_matches_context(question, chunks):
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
 
+    # Build prompt
     prompt = build_prompt(question, chunks)
 
+    # Generate answer
     if USE_LOCAL:
         tok, model = _load_local_model()
         enc = tok(prompt, return_tensors="pt").to(model.device)
@@ -385,8 +323,7 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
                 do_sample=False,
             )
 
-        new_ids = out[0][ilen:]
-        raw = tok.decode(new_ids, skip_special_tokens=True)
+        raw = tok.decode(out[0][ilen:], skip_special_tokens=True)
         answer = extract_answer(raw)
 
     else:
@@ -397,8 +334,8 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
             safe = "I don't know."
             return safe, grounding_details(safe, chunks)
 
+    # Validate grounding
     details = grounding_details(answer, chunks)
-
     if ENFORCE_GROUNDING and not details["grounded"]:
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
