@@ -1,10 +1,10 @@
 """
-search_engine.py — MPNet Retriever (SentenceTransformers)
----------------------------------------------------------
+search_engine.py — MPNet Retriever (PyTorch SentenceTransformers)
+----------------------------------------------------------------
 Production Retriever:
     • Uses sentence-transformers/all-mpnet-base-v2 for query embeddings
     • Loads FAISS index + metadata built in Phase 3
-    • Performs vector search + lightweight reranking
+    • Performs vector search + stable reranking
     • Provides citation IDs + confidence scores
 """
 
@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # ---------------------------------------------------------
-# Utility: Simple tokenizer for keyword overlap
+# Utility Tokenizer (Light, Safe)
 # ---------------------------------------------------------
 def _tokenize(text: str):
     if not text:
@@ -26,27 +26,29 @@ def _tokenize(text: str):
     return re.findall(r"\w+", text.lower())
 
 
+# Question words boost reranking weight (mild heuristic)
 QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "can"}
 
 
+# =========================================================
+# RETRIEVER CLASS (Pytorch MPNet + FAISS)
+# =========================================================
 class RbcRetriever:
     def __init__(self):
         """
-        Load FAISS index, metadata, and MPNet encoder.
-
-        Assumes Phase 3 has already created:
-            data/index/rbc_faiss.index
-            data/index/rbc_metadata.parquet
-
-        FAISS index was built from all-mpnet-base-v2 embeddings
-        (normalized, IndexFlatIP).
+        Loads:
+            - FAISS index: data/index/rbc_faiss.index
+            - Metadata:    data/index/rbc_metadata.parquet
+            - PyTorch MPNet: all-mpnet-base-v2
+        
+        Notes:
+            • Matches EXACT same embedding model used in Phase 3.
+            • Embeddings are L2-normalized before FAISS search.
+            • IndexFlatIP gives cosine similarity.
         """
 
         base_dir = Path(__file__).resolve().parents[2]
 
-        # -----------------------------
-        # Load FAISS + metadata
-        # -----------------------------
         index_dir = base_dir / "data" / "index"
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
@@ -56,58 +58,55 @@ class RbcRetriever:
         if not self.meta_path.exists():
             raise FileNotFoundError(f"Metadata parquet not found: {self.meta_path}")
 
+        # Load FAISS index + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
-        # -----------------------------
-        # Load MPNet encoder
-        # -----------------------------
+        # Load PyTorch MPNet encoder
         model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Embedding dimension sanity check
+        # Sanity check embedding dimension
         dim = self.index.d
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != dim:
             raise ValueError(
-                f"Embedding dimension mismatch: FAISS index dim={dim}, "
-                f"MPNet output dim={test_emb.shape[1]}"
+                f"Embedding dimension mismatch: FAISS dim={dim}, "
+                f"MPNet dim={test_emb.shape[1]}"
             )
 
         print(f"[Retriever] Loaded FAISS index: {self.index.ntotal} vectors")
-        print(f"[Retriever] Loaded metadata rows: {len(self.metadata)}")
+        print(f"[Retriever] Loaded metadata:    {len(self.metadata)} rows")
         print(f"[Retriever] MPNet model loaded: {model_name}")
 
+
     # ---------------------------------------------------------
-    # MPNet Encoder
+    # Embed Query (PyTorch MPNet)
     # ---------------------------------------------------------
     def embed_query(self, text: str) -> np.ndarray:
-        """
-        Encode text → 768-d MPNet embedding.
-
-        We normalize embeddings to match Phase 3, where:
-            - embeddings were normalized with faiss.normalize_L2
-            - IndexFlatIP is used (cosine similarity).
-        """
-
         if not text or not isinstance(text, str):
             raise ValueError("Query text must be a non-empty string.")
 
         emb = self.model.encode(
-            [text],
-            convert_to_numpy=True,
-            show_progress_bar=False
+            [text], convert_to_numpy=True, show_progress_bar=False
         ).astype(np.float32)
 
-        # Normalize for cosine similarity with IndexFlatIP
+        # Normalize for cosine similarity
         faiss.normalize_L2(emb)
 
         return emb
 
+
     # ---------------------------------------------------------
-    # Stage-2 Reranking
+    # Stage-2 Reranking (Stable, Predictable)
     # ---------------------------------------------------------
     def _rerank(self, query: str, results: list):
+        """
+        Lightweight reranking:
+            • Preserves FAISS score dominance
+            • Adds mild keyword overlap boost
+            • Ensures lost/stolen chunks don't get overshadowed by fraud chunks
+        """
         q_tokens = set(_tokenize(query))
         question_overlap = q_tokens & QUESTION_WORDS
 
@@ -116,27 +115,28 @@ class RbcRetriever:
             chunk_tokens = set(_tokenize(r["chunk"]))
             overlap = len(q_tokens & chunk_tokens)
 
-            base = r["score"]
-            qword_boost = 2 if question_overlap else 1
+            base_score = r["score"]
+            boost = 0.02 * overlap * (2 if question_overlap else 1)
 
-            final_score = base + 0.02 * overlap * qword_boost
+            final_score = float(base_score + boost)
 
-            r["final_score"] = float(final_score)
-            r["citation_id"] = i + 1
-
+            r["final_score"] = final_score
+            r["citation_id"] = i + 1  # sequentially assigned
             reranked.append(r)
 
+        # Highest final_score first
         return sorted(reranked, key=lambda x: x["final_score"], reverse=True)
 
+
     # ---------------------------------------------------------
-    # Main Search
+    # MAIN SEARCH FUNCTION
     # ---------------------------------------------------------
     def search(self, query: str, top_k: int = 5):
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Encode → search
-        query_emb = self.embed_query(query)  # already normalized
+        # Encode → search FAISS
+        query_emb = self.embed_query(query)
         distances, indices = self.index.search(query_emb, top_k)
 
         raw_results = []
@@ -155,8 +155,10 @@ class RbcRetriever:
                 }
             )
 
+        # Stable rerank
         reranked = self._rerank(query, raw_results)
 
+        # Confidence = mean of top-2 scores
         if len(reranked) >= 2:
             avg = (reranked[0]["final_score"] + reranked[1]["final_score"]) / 2
         else:
@@ -169,8 +171,9 @@ class RbcRetriever:
 
         return reranked
 
+
     # ---------------------------------------------------------
-    # Pretty Print
+    # Pretty Print Debug Utility
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
@@ -180,10 +183,10 @@ class RbcRetriever:
             print(f"   Chunk: {r['chunk'][:140]}...")
             if r.get("url"):
                 print(f"   URL: {r['url']}")
-            print(f"   CIT: {r['citation_id']}")
-            print("")
+            print(f"   CIT: {r['citation_id']}\n")
 
 
+# Standalone Test
 if __name__ == "__main__":
     retriever = RbcRetriever()
     retriever.pretty_print("How do I report a lost credit card?", top_k=5)
