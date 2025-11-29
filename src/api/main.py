@@ -1,12 +1,13 @@
 """
-main.py — FastAPI Backend for Production RAG (Cloud Run + ONNX)
+main.py — FastAPI Backend for Production RAG (PyTorch MPNet + Strict Literal Generator)
 
 Features:
-    • FAISS + ONNX MPNet retrieval
-    • Strict literal-mode generator (Phi or Groq)
-    • Option B topic matching (in generator.py)
-    • Stable retrieval filtering (no intent-category loss)
-    • Strict grounding enforcement
+    • PyTorch MPNet retrieval (SentenceTransformers)
+    • FAISS index search + stable reranking
+    • Strict-literal generator (Phi or Groq)
+    • Robust topic matching 
+    • Safe grounding enforcement 
+    • Clean retrieval filtering (no intent/category grouping)
     • JSONL monitoring logs (monitoring/rag_logger.py)
 """
 
@@ -21,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Make sure src/ is importable
+# Make sure src/ directory is importable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Internal modules
@@ -33,16 +34,16 @@ from monitoring.rag_logger import log_rag_event
 # ---------------------------------------------------------
 # Environment
 # ---------------------------------------------------------
-GEN_MODE = os.getenv("GEN_MODE", "local")
-CIT_PATTERN = re.compile(r"CIT:(\d+)")
+GEN_MODE = os.getenv("GEN_MODE", "local").lower().strip()
+CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------
-# FastAPI Initialization
+# FastAPI App Initialization
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Strict Literal RBC RAG using FAISS + ONNX MPNet + Phi/Groq",
+    description="Strict Literal RBC RAG using FAISS + PyTorch MPNet + Phi/Groq",
     version="12.0.0",
 )
 
@@ -56,7 +57,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------
-# Static & Template Setup
+# Static Files & Templates Setup
 # ---------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -69,39 +70,35 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 # ---------------------------------------------------------
-# Load Retriever (global)
+# Load Retriever (Global)
 # ---------------------------------------------------------
-print("Loading retriever...")
+print("Loading PyTorch MPNet retriever...")
 retriever = RbcRetriever()
 print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# CORRECT & STABLE RETRIEVAL FILTERING 
-# (NO intent filtering — avoids lost/stolen vs fraud misrouting)
+# Stable Retrieval Filtering (No intent grouping)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    Stable retrieval filtering:
+    Stable retrieval filter:
 
         1. Sort chunks by final_score
         2. Keep strong chunks only
-        3. Return only the top-N chunk texts
+        3. Return top-N chunk texts
 
-    This version does NOT:
-        - group by intent category
-        - rely on semantic grouping
-        - discard lost/stolen chunks because of fraud noise
-
-    All strict topic checking is handled inside generator.py (Option B).
+    Notes:
+        • Does NOT group by intent category.
+        • Does NOT discard lost/stolen due to fraud noise.
+        • Generator handles topic matching internally (Option A).
     """
     if not results:
         return []
 
-    # Sort by retrieval strength
+    # Sort by retrieval confidence / final score
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
-    # Keep high-quality chunks
     strong = [
         r for r in ordered
         if r.get("final_score", 0.0) >= score_threshold
@@ -111,7 +108,6 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
     if not strong:
         return []
 
-    # Return only the chunk strings
     return [r["chunk"].strip() for r in strong][:max_items]
 
 
@@ -131,11 +127,11 @@ def landing(request: Request):
 def health():
     return {
         "status": "ok",
-        "generator_mode": GEN_MODE,
-        "retriever_model": "onnx-mpnet",
-        "index_size": retriever.index.ntotal,
-        "embedding_dim": retriever.index.d,
-        "record_count": len(retriever.metadata),
+        "generator_mode": GEN_MODE,                 # local or groq
+        "retriever_model": "mpnet-pytorch",         # correct model label
+        "index_size": retriever.index.ntotal,       # FAISS vector count
+        "embedding_dim": retriever.index.d,         # 768
+        "record_count": len(retriever.metadata),    # # of chunks
         "logging_enabled": True,
     }
 
@@ -145,23 +141,22 @@ def health():
 # ---------------------------------------------------------
 @app.get("/ask")
 def ask(
-    query: str = Query(..., description="User's RBC banking question"),
+    query: str = Query(..., description="User query for RBC support"),
     top_k: int = Query(5, ge=1, le=10),
 ):
     start_time = time.time()
 
     try:
         # -------------------------------------------------
-        # 1. SEMANTIC RETRIEVAL
+        # 1. Semantic Retrieval (PyTorch MPNet)
         # -------------------------------------------------
         retrieval_results = retriever.search(query, top_k=top_k)
 
         # -------------------------------------------------
-        # 2. CLEAN + STABLE RETRIEVAL (NO INTENT FILTERING)
+        # 2. Filter & Clean Retrieval
         # -------------------------------------------------
         clean_chunks = clean_retrieval(retrieval_results)
 
-        # No usable context → safe fallback
         if not clean_chunks:
             latency = (time.time() - start_time) * 1000
             safe = "I don't know."
@@ -191,7 +186,7 @@ def ask(
             }
 
         # -------------------------------------------------
-        # 3. GENERATE STRICT-LITERAL ANSWER
+        # 3. Strict-Literal Generation (Option A)
         # -------------------------------------------------
         answer, grounding = generate_answer(query, clean_chunks)
 
@@ -199,7 +194,7 @@ def ask(
         context_overlap = grounding.get("context_overlap", 0.0)
 
         # -------------------------------------------------
-        # 4. Extract inline citations
+        # 4. Extract citations
         # -------------------------------------------------
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
@@ -211,7 +206,7 @@ def ask(
         latency = (time.time() - start_time) * 1000
 
         # -------------------------------------------------
-        # 6. Log JSONL event for monitoring
+        # 6. Log event
         # -------------------------------------------------
         log_rag_event(
             query=query,
@@ -226,7 +221,7 @@ def ask(
         )
 
         # -------------------------------------------------
-        # 7. Return response payload
+        # 7. Return final response
         # -------------------------------------------------
         return {
             "query": query,
