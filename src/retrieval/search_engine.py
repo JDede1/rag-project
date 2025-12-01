@@ -6,6 +6,7 @@ Production Retriever:
     • Loads FAISS index + metadata built in Phase 3
     • Performs vector search + stable reranking
     • Provides citation IDs + confidence scores
+    • Fully consistent with generator.py (Option A) and main.py
 """
 
 import re
