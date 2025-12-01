@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py
+# generator.py — FINAL PRODUCTION VERSION (Phase-5 Safe)
 # =========================================================
 
 import os
@@ -7,7 +7,7 @@ import re
 from typing import List, Dict, Tuple
 
 # ---------------------------------------------------------
-# Environment
+# Environment setup
 # ---------------------------------------------------------
 GEN_MODE = os.getenv("GEN_MODE", "local").lower().strip()
 USE_LOCAL = GEN_MODE == "local"
@@ -21,7 +21,7 @@ if USE_LOCAL:
 
 
 # ---------------------------------------------------------
-# GROQ
+# GROQ client (lazy)
 # ---------------------------------------------------------
 GROQ_AVAILABLE = False
 if USE_GROQ:
@@ -34,7 +34,7 @@ if USE_GROQ:
 
 
 # ---------------------------------------------------------
-# Local Phi-3.5 (lazy load)
+# Local Phi-3.5 loader (lazy)
 # ---------------------------------------------------------
 _tokenizer = None
 _model = None
@@ -66,8 +66,8 @@ def _load_local_model():
 # ---------------------------------------------------------
 STOPWORDS = {
     "the","is","a","to","of","and","in","for","on","by","you",
-    "your","or","we","with","at","from","as","an","it","be",
-    "are","this","that","can","if","would","will"
+    "your","or","we","with","at","from","as","an","it","be","are",
+    "this","that","can","if","would","will"
 }
 
 def _simple_tokens(text: str) -> List[str]:
@@ -78,16 +78,15 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------
-# FINAL FIXED TOPIC MATCHING (bullet-proof)
+# TOPIC MATCHING 
 # ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
     """
-    FINAL VERSION:
-    • Evaluates each chunk independently.
-    • If ANY chunk is relevant → return True.
-    • Fraud chunks no longer block lost/stolen questions.
-    • Payment chunks no longer block Interac e-Transfer.
-    • Strong semantic patterns first, lexical fallback second.
+    Phase-5 hardened:
+        • ANY matching chunk triggers True
+        • Lost/Stolen / Fraud / e-Transfer / Password all handled
+        • Fraud chunks NEVER block lost/stolen
+        • Lexical fallback still allowed
     """
 
     if not chunks:
@@ -96,52 +95,41 @@ def _question_matches_context(question: str, chunks: List[str]) -> bool:
     q = question.lower()
     q_tokens = set(_simple_tokens(question))
 
-    strong_keywords = {
-        # lost / stolen
+    strong = {
         "lost": {"lost", "stolen", "misplaced"},
         "stolen": {"stolen", "lost", "misplaced"},
-
-        # fraud
         "fraud": {"fraud", "unauthorized", "dispute"},
-
-        # e-transfer
-        "transfer": {"transfer", "etransfer", "e-transfer", "interac"},
-
-        # password / login
-        "password": {"password", "passcode", "login", "reset"},
+        "etransfer": {"transfer", "etransfer", "e-transfer", "interac"},
+        "password": {"password", "passcode", "login", "reset"}
     }
 
-    # ---------- PASS 1: Strong rule-based matching ----------
-    for chunk in chunks:
-        c = chunk.lower()
+    for ch in chunks:
+        c = ch.lower()
 
-        # Rule group: lost / stolen
-        if "lost" in q and any(w in c for w in strong_keywords["lost"]):
-            return True
-        if "stolen" in q and any(w in c for w in strong_keywords["stolen"]):
+        # Lost / stolen
+        if ("lost" in q and any(w in c for w in strong["lost"])) or \
+           ("stolen" in q and any(w in c for w in strong["stolen"])):
             return True
 
-        # Rule group: fraud
-        if "fraud" in q and any(w in c for w in strong_keywords["fraud"]):
+        # Fraud
+        if "fraud" in q and any(w in c for w in strong["fraud"]):
             return True
 
-        # e-transfer
-        if "transfer" in q or "e-transfer" in q or "etransfer" in q or "e transfer" in q:
-            if any(w in c for w in strong_keywords["transfer"]):
+        # Interac / e-Transfer
+        if ("transfer" in q or "e transfer" in q or "e-transfer" in q or "etransfer" in q):
+            if any(w in c for w in strong["etransfer"]):
                 return True
 
-        # password / login
-        if "password" in q or "login" in q:
-            if any(w in c for w in strong_keywords["password"]):
+        # Password / login
+        if ("password" in q or "login" in q):
+            if any(w in c for w in strong["password"]):
                 return True
 
-    # ---------- PASS 2: Lexical fallback ----------
-    for chunk in chunks:
-        c_tokens = set(_simple_tokens(chunk))
-        if q_tokens & c_tokens:
+    # Lexical fallback
+    for ch in chunks:
+        if q_tokens & set(_simple_tokens(ch)):
             return True
 
-    # ---------- FAIL ----------
     return False
 
 
@@ -149,12 +137,10 @@ def _question_matches_context(question: str, chunks: List[str]) -> bool:
 # Prompt builder
 # ---------------------------------------------------------
 def _attach_citations(chunks: List[str]) -> List[str]:
-    return [f"[CIT:{i+1}] {chunk.strip()}" for i, chunk in enumerate(chunks)]
+    return [f"[CIT:{i+1}] {c.strip()}" for i, c in enumerate(chunks)]
 
 def build_prompt(question: str, chunks: List[str]) -> str:
-    context = "No context available." if not chunks else "\n\n".join(
-        _attach_citations(chunks)
-    )
+    ctx = "No context available." if not chunks else "\n\n".join(_attach_citations(chunks))
 
     return (
         "You are a strict RBC banking assistant.\n"
@@ -162,28 +148,28 @@ def build_prompt(question: str, chunks: List[str]) -> str:
         "1. Use ONLY the provided Context. No outside knowledge.\n"
         "2. Copy sentences LITERALLY with minimal trimming.\n"
         "3. If missing info → answer ONLY: I don't know.\n"
-        "4. Every fact MUST have a citation.\n"
-        "REQUIRED FORMAT:\n"
+        "4. Every fact MUST include a citation.\n"
+        "FORMAT:\n"
         "   Short Answer: <literal sentence> [CIT:x]\n"
         "   Details:\n"
-        "   • ...\n"
+        "   • Only copy literal sentences from context.\n"
         "   Important Notes:\n"
-        "   • ...\n"
+        "   • Only copy literal sentences from context.\n"
         "   Sources:\n"
         "   • CIT:x\n"
         "Do NOT mention rules.\n\n"
-        f"Context:\n{context}\n\n"
+        f"Context:\n{ctx}\n\n"
         f"Question: {question}\n"
         "Answer:"
     )
 
 
 # ---------------------------------------------------------
-# Extract answer
+# Extract answer 
 # ---------------------------------------------------------
 _CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 
-def _enforce_single_sentence(text: str) -> str:
+def _enforce_single_sentence(text: str):
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return parts[0].strip()
 
@@ -194,18 +180,15 @@ def extract_answer(raw: str) -> str:
     t = raw.strip()
     lower = t.lower()
 
-    # Locate "Short Answer:"
     idx = lower.find("short answer:")
     if idx != -1:
         t = t[idx:]
 
-    # Clean system/metadata lines
+    # Remove metadata/system lines
     lines = []
     for ln in t.split("\n"):
         s = ln.strip()
-        if s and not s.lower().startswith(
-                ("context:", "question:", "system:", "assistant:", "user:")
-        ):
+        if s and not s.lower().startswith(("context:", "question:", "system:", "assistant:", "user:")):
             lines.append(s)
 
     text = "\n".join(lines)
@@ -236,20 +219,28 @@ def extract_answer(raw: str) -> str:
         if current:
             sections[current].append(l)
 
-    # Build final answer
+    # ---- Build Short Answer ----
     sa = " ".join(sections["short"]).strip() or "I don't know."
     sa = _enforce_single_sentence(sa)
     short = f"Short Answer: {sa}"
 
-    def bulletize(lines):
-        return [l if l.startswith("•") else f"• {l}" for l in lines] or ["• (no additional information)"]
+    # ---- NO HALLUCINATIONS: keep only literal context lines ----
+    def literal_only(lines):
+        bullets = []
+        for l in lines:
+            if "[" in l and "]" in l:  # has citation → safe
+                if not l.startswith("•"):
+                    l = "• " + l
+                bullets.append(l)
+        return bullets or ["• (no additional information)"]
 
-    details = bulletize(sections["details"])
-    notes = bulletize(sections["notes"])
+    details = literal_only(sections["details"])
+    notes = literal_only(sections["notes"])
 
+    # Build final
     body = "\n".join([short] + details + notes)
     used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
-    sources = [f"• CIT:{cid}" for cid in used] or ["• CIT:1"]
+    sources = [f"• CIT:{u}" for u in used] or ["• CIT:1"]
 
     return (
         short
@@ -260,14 +251,13 @@ def extract_answer(raw: str) -> str:
 
 
 # ---------------------------------------------------------
-# Grounding
+# Grounding logic
 # ---------------------------------------------------------
 def is_grounded(answer: str, chunks: List[str]) -> bool:
-    if not answer or not chunks:
-        return False
-
     if answer.lower().strip() == "i don't know.":
         return True
+    if not chunks:
+        return False
 
     ans_tokens = set(_simple_tokens(answer))
     ctx_tokens = set(_simple_tokens(" ".join(chunks)))
@@ -280,6 +270,7 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
 
     return ratio >= 0.10 and len(overlap) >= 1
 
+
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
     if not chunks:
         return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
@@ -289,6 +280,7 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
     ans_tokens = set(_simple_tokens(answer))
     ctx_tokens = set(_simple_tokens(" ".join(chunks)))
+
     overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
 
@@ -320,14 +312,14 @@ def _generate_groq(prompt: str) -> str:
 
 
 # ---------------------------------------------------------
-# MAIN — generate_answer
+# MAIN: generate_answer()
 # ---------------------------------------------------------
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
+
     if not chunks:
         safe = "I don't know."
         return safe, grounding_details(safe, [])
 
-    # final topic matching
     if not _question_matches_context(question, chunks):
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
