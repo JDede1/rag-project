@@ -27,7 +27,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Internal modules
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer
+from src.generation.generator import generate_answer, grounding_details
 from monitoring.rag_logger import log_rag_event
 
 
@@ -274,3 +274,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
     )
+
