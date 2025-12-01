@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py — STRICT BUT USABLE LITERAL MODE (Option A)
+# generator.py
 # =========================================================
 
 import os
@@ -21,7 +21,7 @@ if USE_LOCAL:
 
 
 # ---------------------------------------------------------
-# GROQ client
+# GROQ
 # ---------------------------------------------------------
 GROQ_AVAILABLE = False
 if USE_GROQ:
@@ -34,7 +34,7 @@ if USE_GROQ:
 
 
 # ---------------------------------------------------------
-# Local Phi-3.5 model (lazy load)
+# Local Phi-3.5 (lazy load)
 # ---------------------------------------------------------
 _tokenizer = None
 _model = None
@@ -67,7 +67,7 @@ def _load_local_model():
 STOPWORDS = {
     "the","is","a","to","of","and","in","for","on","by","you",
     "your","or","we","with","at","from","as","an","it","be",
-    "are","this","that","can","if","would","will",
+    "are","this","that","can","if","would","will"
 }
 
 def _simple_tokens(text: str) -> List[str]:
@@ -78,38 +78,75 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------
-# Robust Topic Matching (Fixed for Lost/Stolen)
+# FINAL FIXED TOPIC MATCHING (bullet-proof)
 # ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
+    """
+    FINAL VERSION:
+    • Evaluates each chunk independently.
+    • If ANY chunk is relevant → return True.
+    • Fraud chunks no longer block lost/stolen questions.
+    • Payment chunks no longer block Interac e-Transfer.
+    • Strong semantic patterns first, lexical fallback second.
+    """
+
     if not chunks:
         return False
 
     q = question.lower()
     q_tokens = set(_simple_tokens(question))
 
+    strong_keywords = {
+        # lost / stolen
+        "lost": {"lost", "stolen", "misplaced"},
+        "stolen": {"stolen", "lost", "misplaced"},
+
+        # fraud
+        "fraud": {"fraud", "unauthorized", "dispute"},
+
+        # e-transfer
+        "transfer": {"transfer", "etransfer", "e-transfer", "interac"},
+
+        # password / login
+        "password": {"password", "passcode", "login", "reset"},
+    }
+
+    # ---------- PASS 1: Strong rule-based matching ----------
     for chunk in chunks:
         c = chunk.lower()
+
+        # Rule group: lost / stolen
+        if "lost" in q and any(w in c for w in strong_keywords["lost"]):
+            return True
+        if "stolen" in q and any(w in c for w in strong_keywords["stolen"]):
+            return True
+
+        # Rule group: fraud
+        if "fraud" in q and any(w in c for w in strong_keywords["fraud"]):
+            return True
+
+        # e-transfer
+        if "transfer" in q or "e-transfer" in q or "etransfer" in q or "e transfer" in q:
+            if any(w in c for w in strong_keywords["transfer"]):
+                return True
+
+        # password / login
+        if "password" in q or "login" in q:
+            if any(w in c for w in strong_keywords["password"]):
+                return True
+
+    # ---------- PASS 2: Lexical fallback ----------
+    for chunk in chunks:
         c_tokens = set(_simple_tokens(chunk))
-
-        # Strong signals
-        if "lost" in q and ("lost" in c or "stolen" in c):
-            return True
-        if "stolen" in q and ("stolen" in c or "lost" in c):
-            return True
-
-        # Moderate signal: card + lost/stolen patterns
-        if ("card" in q and ("lost" in c or "stolen" in c)):
-            return True
-
-        # Lexical overlap fallback
         if q_tokens & c_tokens:
             return True
 
+    # ---------- FAIL ----------
     return False
 
 
 # ---------------------------------------------------------
-# Prompt Builder (Literal Mode)
+# Prompt builder
 # ---------------------------------------------------------
 def _attach_citations(chunks: List[str]) -> List[str]:
     return [f"[CIT:{i+1}] {chunk.strip()}" for i, chunk in enumerate(chunks)]
@@ -123,11 +160,11 @@ def build_prompt(question: str, chunks: List[str]) -> str:
         "You are a strict RBC banking assistant.\n"
         "RULES:\n"
         "1. Use ONLY the provided Context. No outside knowledge.\n"
-        "2. Copy sentences LITERALLY from the context with minimal trimming.\n"
-        "3. If the information is not explicitly in Context, answer ONLY: I don't know.\n"
-        "4. Every factual sentence MUST have a citation [CIT:x].\n"
-        "5. REQUIRED FORMAT:\n"
-        "   Short Answer: <one literal sentence> [CIT:x]\n"
+        "2. Copy sentences LITERALLY with minimal trimming.\n"
+        "3. If missing info → answer ONLY: I don't know.\n"
+        "4. Every fact MUST have a citation.\n"
+        "REQUIRED FORMAT:\n"
+        "   Short Answer: <literal sentence> [CIT:x]\n"
         "   Details:\n"
         "   • ...\n"
         "   Important Notes:\n"
@@ -142,7 +179,7 @@ def build_prompt(question: str, chunks: List[str]) -> str:
 
 
 # ---------------------------------------------------------
-# Extract Answer
+# Extract answer
 # ---------------------------------------------------------
 _CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 
@@ -157,22 +194,24 @@ def extract_answer(raw: str) -> str:
     t = raw.strip()
     lower = t.lower()
 
-    # Try to locate Short Answer
+    # Locate "Short Answer:"
     idx = lower.find("short answer:")
     if idx != -1:
         t = t[idx:]
 
-    # Clean lines
+    # Clean system/metadata lines
     lines = []
     for ln in t.split("\n"):
         s = ln.strip()
-        if s and not s.lower().startswith(("context:", "question:", "system:", "assistant:", "user:")):
+        if s and not s.lower().startswith(
+                ("context:", "question:", "system:", "assistant:", "user:")
+        ):
             lines.append(s)
 
     text = "\n".join(lines)
 
     # Parse sections
-    sections = {"short": [], "details": [], "notes": [], "sources": []}
+    sections = {"short": [], "details": [], "notes": []}
     current = None
 
     for ln in text.split("\n"):
@@ -194,18 +233,11 @@ def extract_answer(raw: str) -> str:
             current = "notes"
             continue
 
-        if ll.startswith("sources:"):
-            current = "sources"
-            continue
-
         if current:
             sections[current].append(l)
 
-    # Build Short Answer
-    sa = " ".join(sections["short"]).strip()
-    if not sa:
-        sa = "I don't know."
-
+    # Build final answer
+    sa = " ".join(sections["short"]).strip() or "I don't know."
     sa = _enforce_single_sentence(sa)
     short = f"Short Answer: {sa}"
 
@@ -216,22 +248,19 @@ def extract_answer(raw: str) -> str:
     notes = bulletize(sections["notes"])
 
     body = "\n".join([short] + details + notes)
-    used_cits = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
+    used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
+    sources = [f"• CIT:{cid}" for cid in used] or ["• CIT:1"]
 
-    sources = [f"• CIT:{cid}" for cid in used_cits] or ["• CIT:1"]
-
-    final = (
+    return (
         short
         + "\nDetails:\n" + "\n".join(details)
         + "\nImportant Notes:\n" + "\n".join(notes)
         + "\nSources:\n" + "\n".join(sources)
-    )
-
-    return final.strip()
+    ).strip()
 
 
 # ---------------------------------------------------------
-# Grounding (Relaxed but Safe)
+# Grounding
 # ---------------------------------------------------------
 def is_grounded(answer: str, chunks: List[str]) -> bool:
     if not answer or not chunks:
@@ -249,9 +278,7 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
     overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
 
-    # More reasonable thresholds
     return ratio >= 0.10 and len(overlap) >= 1
-
 
 def grounding_details(answer: str, chunks: List[str]) -> Dict:
     if not chunks:
@@ -276,7 +303,7 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
 
 # ---------------------------------------------------------
-# GROQ Generation
+# GROQ generation
 # ---------------------------------------------------------
 def _generate_groq(prompt: str) -> str:
     if not GROQ_AVAILABLE:
@@ -293,22 +320,20 @@ def _generate_groq(prompt: str) -> str:
 
 
 # ---------------------------------------------------------
-# MAIN: generate_answer()
+# MAIN — generate_answer
 # ---------------------------------------------------------
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
     if not chunks:
         safe = "I don't know."
         return safe, grounding_details(safe, [])
 
-    # Robust topic-match
+    # final topic matching
     if not _question_matches_context(question, chunks):
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
 
-    # Build prompt
     prompt = build_prompt(question, chunks)
 
-    # Generate answer
     if USE_LOCAL:
         tok, model = _load_local_model()
         enc = tok(prompt, return_tensors="pt").to(model.device)
@@ -334,8 +359,8 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
             safe = "I don't know."
             return safe, grounding_details(safe, chunks)
 
-    # Validate grounding
     details = grounding_details(answer, chunks)
+
     if ENFORCE_GROUNDING and not details["grounded"]:
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
