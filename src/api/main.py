@@ -5,8 +5,8 @@ Features:
     • PyTorch MPNet retrieval (SentenceTransformers)
     • FAISS index search + stable reranking
     • Strict-literal generator (Phi or Groq)
-    • Robust topic matching 
-    • Safe grounding enforcement 
+    • Robust topic matching (Option A)
+    • Safe grounding enforcement (Option A)
     • Clean retrieval filtering (no intent/category grouping)
     • JSONL monitoring logs (monitoring/rag_logger.py)
 """
