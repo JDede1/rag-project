@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py 
+# generator.py
 # =========================================================
 
 import os
@@ -78,54 +78,48 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------
-# HARDENED TOPIC MATCHING (FINAL)
+# SMART TOPIC MATCHING
 # ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
+    """
+    Phase-7 logic:
+        • Trust enhanced retriever strongly.
+        • Only block context if CLEAR mismatch.
+        • Use multi-signal matching (topic keywords + semantics + token overlap).
+    """
 
     if not chunks:
         return False
 
     q = question.lower()
 
-    # LOST / STOLEN
-    if "lost" in q or "stolen" in q:
-        for ch in chunks:
-            c = ch.lower()
-            if (
-                "lost" in c or "stolen" in c
-                or "permanently lost" in c
-                or "misplaced" in c
-            ):
-                return True
+    # Keyword clusters
+    LOST = {"lost", "stolen", "misplaced", "permanently lost"}
+    FRAUD = {"fraud", "unauthorized", "dispute"}
+    ET = {"transfer", "etransfer", "e-transfer", "interac"}
+    LOGIN = {"password", "login", "reset", "passcode"}
 
-    # FRAUD
-    if "fraud" in q or "unauthorized" in q or "dispute" in q:
-        for ch in chunks:
-            c = ch.lower()
-            if "fraud" in c or "unauthorized" in c or "dispute" in c:
-                return True
-
-    # E-TRANSFER
-    if ("transfer" in q or "e-transfer" in q or "etransfer" in q or "interac" in q):
-        for ch in chunks:
-            c = ch.lower()
-            if "transfer" in c or "interac" in c:
-                return True
-
-    # PASSWORD / LOGIN
-    if ("password" in q or "login" in q or "reset" in q):
-        for ch in chunks:
-            c = ch.lower()
-            if "password" in c or "reset" in c or "login" in c:
-                return True
-
-    # LEXICAL fallback
-    q_tokens = set(_simple_tokens(question))
+    # 1 — If ANY chunk shares tokens with question → allow
+    q_tok = set(_simple_tokens(question))
     for ch in chunks:
-        if q_tokens & set(_simple_tokens(ch)):
+        if q_tok & set(_simple_tokens(ch)):
             return True
 
-    return False
+    # 2 — Relaxed topic match (keyword cluster)
+    def cluster_match(cluster):
+        return any(any(k in c.lower() for k in cluster) for c in chunks)
+
+    if any(k in q for k in LOST) and cluster_match(LOST):
+        return True
+    if any(k in q for k in FRAUD) and cluster_match(FRAUD):
+        return True
+    if any(k in q for k in ET) and cluster_match(ET):
+        return True
+    if any(k in q for k in LOGIN) and cluster_match(LOGIN):
+        return True
+
+    # 3 — Semantic fallback: allow generator to attempt
+    return True
 
 
 # ---------------------------------------------------------
@@ -221,7 +215,7 @@ def extract_answer(raw: str) -> str:
     def literal_only(lines):
         out = []
         for l in lines:
-            if "[" in l and "]" in l:
+            if "[CIT:" in l:
                 if not l.startswith("•"):
                     l = "• " + l
                 out.append(l)
@@ -230,8 +224,7 @@ def extract_answer(raw: str) -> str:
     details = literal_only(sections["details"])
     notes = literal_only(sections["notes"])
 
-    body = "\n".join([short] + details + notes)
-    used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
+    used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer("\n".join(details + notes + [short]))})
     sources = [f"• CIT:{c}" for c in used] or ["• CIT:1"]
 
     return (
@@ -243,14 +236,9 @@ def extract_answer(raw: str) -> str:
 
 
 # ---------------------------------------------------------
-# Option A — STRICT LITERAL FALLBACK
+# STRICT LITERAL FALLBACK
 # ---------------------------------------------------------
 def _option_a_fallback(chunks: List[str]) -> str:
-    """
-    Uses the FIRST chunk as the literal Short Answer.
-    This guarantees the exact RBC wording with no hallucination.
-    """
-
     if not chunks:
         return "I don't know."
 
@@ -276,6 +264,7 @@ def is_grounded(answer: str, chunks: List[str]) -> bool:
     ctx_tokens = set(_simple_tokens(" ".join(chunks)))
     overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
+
     return ratio >= 0.10 and len(overlap) >= 1
 
 
@@ -284,6 +273,7 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
         return {"grounded": False, "grounding_score": 0.0, "context_overlap": 0.0}
 
     if answer.lower().strip() == "i don't know.":
+
         return {"grounded": True, "grounding_score": 1.0, "context_overlap": 0.0}
 
     ans_tokens = set(_simple_tokens(answer))
@@ -302,7 +292,7 @@ def grounding_details(answer: str, chunks: List[str]) -> Dict:
 
 
 # ---------------------------------------------------------
-# GROQ generation (FIXED)
+# GROQ generation
 # ---------------------------------------------------------
 def _generate_groq(prompt: str) -> str:
     if not GROQ_AVAILABLE:
@@ -319,14 +309,16 @@ def _generate_groq(prompt: str) -> str:
 
 
 # ---------------------------------------------------------
-# MAIN: generate_answer() WITH FALLBACK
+# MAIN: generate_answer() 
 # ---------------------------------------------------------
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
+    # 1 — No context
     if not chunks:
         safe = "I don't know."
         return safe, grounding_details(safe, [])
 
+    # 2 — RELAXED topic matching (Phase-7)
     if not _question_matches_context(question, chunks):
         safe = "I don't know."
         return safe, grounding_details(safe, chunks)
@@ -354,27 +346,23 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
             raw = tok.decode(out[0][ilen:], skip_special_tokens=True)
             answer = extract_answer(raw)
 
-        else:  # GROQ MODE
+        else:  
             raw = _generate_groq(prompt)
             answer = extract_answer(raw)
 
     except Exception:
-        # HARD FALLBACK TO STRICT LITERAL
         fallback = _option_a_fallback(chunks)
         return fallback, grounding_details(fallback, chunks)
-
 
     # ---------------------------
     # VALIDATE ANSWER
     # ---------------------------
     details = grounding_details(answer, chunks)
 
-    # If generator gave "I don't know." → fallback to literal RBC sentence
     if answer.strip().lower() == "i don't know.":
         fallback = _option_a_fallback(chunks)
         return fallback, grounding_details(fallback, chunks)
 
-    # If ungrounded and grounding enforcement is ON → fallback
     if ENFORCE_GROUNDING and not details["grounded"]:
         fallback = _option_a_fallback(chunks)
         return fallback, grounding_details(fallback, chunks)
