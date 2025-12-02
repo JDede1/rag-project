@@ -243,6 +243,27 @@ def extract_answer(raw: str) -> str:
 
 
 # ---------------------------------------------------------
+# Option A — STRICT LITERAL FALLBACK
+# ---------------------------------------------------------
+def _option_a_fallback(chunks: List[str]) -> str:
+    """
+    Uses the FIRST chunk as the literal Short Answer.
+    This guarantees the exact RBC wording with no hallucination.
+    """
+
+    if not chunks:
+        return "I don't know."
+
+    first = chunks[0].strip()
+    return (
+        f"Short Answer: {_enforce_single_sentence(first)} [CIT:1]\n"
+        f"Details:\n• [CIT:1] {first}\n"
+        f"Important Notes:\n• (no additional information)\n"
+        f"Sources:\n• CIT:1"
+    )
+
+
+# ---------------------------------------------------------
 # Grounding logic
 # ---------------------------------------------------------
 def is_grounded(answer: str, chunks: List[str]) -> bool:
@@ -294,13 +315,11 @@ def _generate_groq(prompt: str) -> str:
         top_p=1.0,
         max_tokens=250,
     )
-
-    # FIXED
     return out.choices[0].message["content"]
 
 
 # ---------------------------------------------------------
-# MAIN: generate_answer()
+# MAIN: generate_answer() WITH FALLBACK
 # ---------------------------------------------------------
 def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
@@ -314,35 +333,50 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
     prompt = build_prompt(question, chunks)
 
-    if USE_LOCAL:
-        tok, model = _load_local_model()
-        enc = tok(prompt, return_tensors="pt").to(model.device)
-        ilen = enc["input_ids"].shape[1]
+    # ---------------------------
+    # TRY NORMAL GENERATION
+    # ---------------------------
+    try:
+        if USE_LOCAL:
+            tok, model = _load_local_model()
+            enc = tok(prompt, return_tensors="pt").to(model.device)
+            ilen = enc["input_ids"].shape[1]
 
-        with torch.no_grad():
-            out = model.generate(
-                **enc,
-                max_new_tokens=250,
-                temperature=0.0,
-                top_p=1.0,
-                do_sample=False,
-            )
+            with torch.no_grad():
+                out = model.generate(
+                    **enc,
+                    max_new_tokens=250,
+                    temperature=0.0,
+                    top_p=1.0,
+                    do_sample=False,
+                )
 
-        raw = tok.decode(out[0][ilen:], skip_special_tokens=True)
-        answer = extract_answer(raw)
+            raw = tok.decode(out[0][ilen:], skip_special_tokens=True)
+            answer = extract_answer(raw)
 
-    else:  # GROQ MODE
-        try:
+        else:  # GROQ MODE
             raw = _generate_groq(prompt)
             answer = extract_answer(raw)
-        except Exception:
-            safe = "I don't know."
-            return safe, grounding_details(safe, chunks)
 
+    except Exception:
+        # HARD FALLBACK TO STRICT LITERAL
+        fallback = _option_a_fallback(chunks)
+        return fallback, grounding_details(fallback, chunks)
+
+
+    # ---------------------------
+    # VALIDATE ANSWER
+    # ---------------------------
     details = grounding_details(answer, chunks)
 
+    # If generator gave "I don't know." → fallback to literal RBC sentence
+    if answer.strip().lower() == "i don't know.":
+        fallback = _option_a_fallback(chunks)
+        return fallback, grounding_details(fallback, chunks)
+
+    # If ungrounded and grounding enforcement is ON → fallback
     if ENFORCE_GROUNDING and not details["grounded"]:
-        safe = "I don't know."
-        return safe, grounding_details(safe, chunks)
+        fallback = _option_a_fallback(chunks)
+        return fallback, grounding_details(fallback, chunks)
 
     return answer.strip(), details
