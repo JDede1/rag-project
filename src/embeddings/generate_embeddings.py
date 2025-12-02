@@ -1,21 +1,17 @@
 """
 generate_embeddings.py
 -------------------------------------------------------
-Generate vector embeddings for RBC FAQ chunks using
-the high-performance 'all-mpnet-base-v2' model, while
-preserving provenance metadata.
+Embedding Generator
 
-This version supports the modern preprocessing pipeline:
-    clean → normalize → split → chunk
-Final input dataset: rbc_faq_chunks.parquet
+Fixes the major retrieval issue where:
+    • 'lost card' queries retrieved 'fraud' chunks
+    • 'fraud' queries retrieved 'lost card' chunks
+    • Retrieval relied too heavily on question text
 
-Each chunk contains:
-    question
-    chunk
-    source_faq_index
-    url
-    source
-    retrieved_at
+New strategy:
+    • Embed CHUNK-ONLY text (removes semantic collision)
+    • Add an extremely light category signal (optional, safe)
+    • Preserve all provenance and file paths
 
 Outputs:
     • rbc_embeddings.npy
@@ -37,10 +33,26 @@ DATA_INDEX = BASE_DIR / "data" / "index"
 
 DATA_INDEX.mkdir(parents=True, exist_ok=True)
 
-# Upgraded embedding model: high accuracy, paraphrase-strong
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
-
 CHUNKS_PATH = DATA_PROCESSED / "rbc_faq_chunks.parquet"
+
+
+# -------------------------------------------------------
+# LIGHT CATEGORY SIGNAL
+# -------------------------------------------------------
+# This prevents semantic drift without reintroducing collision.
+def classify_hint(question: str) -> str:
+    q = question.lower()
+
+    if any(k in q for k in ["lost", "stolen", "misplaced"]):
+        return " lostcard"
+    if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
+        return " fraud"
+    if any(k in q for k in ["password", "login", "reset"]):
+        return " login"
+    if any(k in q for k in ["transfer", "etransfer", "e-transfer", "interac"]):
+        return " etransfer"
+    return " general"
 
 
 # -------------------------------------------------------
@@ -52,13 +64,20 @@ def generate_embeddings():
     print(f"Loaded {len(df)} chunk entries")
 
     # ---------------------------------------------------
-    # Build text to embed
+    # Build text to embed (CHUNK-ONLY + category hint)
     # ---------------------------------------------------
-    # Use question + chunk (optimized for retrieval alignment)
-    df["embedding_text"] = df["question"].str.strip() + " " + df["chunk"].str.strip()
+    # Major Phase-7 fix: avoid question+chunk collisions
+    df["category_hint"] = df["question"].apply(classify_hint)
+
+    df["embedding_text"] = (
+        df["chunk"].str.strip()
+        + df["category_hint"]         # tiny nudge, keeps clusters distinct
+    )
+
+    print("Sample embedding_text:", df["embedding_text"].iloc[0][:120], "...")
 
     # ---------------------------------------------------
-    # Load SentenceTransformer model
+    # Load embedding model
     # ---------------------------------------------------
     print(f"Loading embedding model: {MODEL_NAME}")
     model = SentenceTransformer(MODEL_NAME)
@@ -70,7 +89,7 @@ def generate_embeddings():
 
     embeddings = model.encode(
         df["embedding_text"].tolist(),
-        batch_size=32,               # L4 GPU easily handles 32
+        batch_size=32,
         show_progress_bar=True,
         convert_to_numpy=True,
         device="cuda" if model.device is not None else None
@@ -79,14 +98,14 @@ def generate_embeddings():
     print(f"Embeddings shape: {embeddings.shape}")
 
     # ---------------------------------------------------
-    # Save embeddings
+    # Save embeddings → FAISS will normalize them
     # ---------------------------------------------------
     emb_path = DATA_INDEX / "rbc_embeddings.npy"
     np.save(emb_path, embeddings)
     print(f"Saved embeddings → {emb_path}")
 
     # ---------------------------------------------------
-    # Save metadata only
+    # Save metadata (unchanged)
     # ---------------------------------------------------
     metadata_cols = [
         "question",
