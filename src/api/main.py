@@ -1,14 +1,11 @@
 """
-main.py — FastAPI Backend for Production RAG (PyTorch MPNet + Strict Literal Generator)
+main.py — FastAPI Backend for Production RAG 
 
-Features:
-    • PyTorch MPNet retrieval (SentenceTransformers)
-    • FAISS index search + stable reranking
-    • Strict-literal generator (Phi or Groq)
-    • Robust topic matching (Option A)
-    • Safe grounding enforcement (Option A)
-    • Clean retrieval filtering (no intent/category grouping)
-    • JSONL monitoring logs (monitoring/rag_logger.py)
+Fully aligned with:
+    • Updated embeddings (chunk-only + hint)
+    • New topic-aware search_engine.py
+    • Strict literal generator 
+    • Monitoring (rag_logger)
 """
 
 import sys
@@ -44,7 +41,7 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 app = FastAPI(
     title="Fintech RAG API",
     description="Strict Literal RBC RAG using FAISS + PyTorch MPNet + Phi/Groq",
-    version="12.0.0",
+    version="12.1.0",
 )
 
 app.add_middleware(
@@ -78,93 +75,97 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# Stable Retrieval Filtering (No intent grouping)
+# UPDATED CLEAN RETRIEVAL 
 # ---------------------------------------------------------
-def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
+def clean_retrieval(results: list, score_threshold: float = 0.18, max_items: int = 6):
     """
-    Stable retrieval filter:
+    Optimized retrieval filtering:
 
-        1. Sort chunks by final_score
-        2. Keep strong chunks only
-        3. Return top-N chunk texts
-
-    Notes:
-        • Does NOT group by intent category.
-        • Does NOT discard lost/stolen due to fraud noise.
-        • Generator handles topic matching internally (Option A).
+        • Trust improved reranking from search_engine.py
+        • Always keep top chunk (highest final_score)
+        • Keep any chunk whose topic == top_chunk.topic
+        • Keep chunks above score threshold
+        • Limit to max_items
     """
+
     if not results:
         return []
 
-    # Sort by retrieval confidence / final score
+    # Sort desc by final score
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
-    strong = [
-        r for r in ordered
-        if r.get("final_score", 0.0) >= score_threshold
-        and isinstance(r.get("chunk"), str)
-    ]
+    top = ordered[0]
+    top_topic = top.get("topic", "general")
 
-    if not strong:
-        return []
+    strong = []
+    for r in ordered:
+        score = r.get("final_score", 0.0)
+        topic = r.get("topic", "general")
+        chunk_text = r.get("chunk")
 
-    return [r["chunk"].strip() for r in strong][:max_items]
+        if not isinstance(chunk_text, str):
+            continue
+
+        # Keep if:
+        # 1) strong score OR
+        # 2) same topic as top chunk
+        if score >= score_threshold or topic == top_topic:
+            strong.append(chunk_text.strip())
+
+        if len(strong) >= max_items:
+            break
+
+    return strong
 
 
 # ---------------------------------------------------------
-# TOPIC-FOCUSED CONTEXT (small but critical fix)
+# UPDATED CONTEXT FOCUS
 # ---------------------------------------------------------
 def focus_context(query: str, chunks: list) -> list:
     """
-    Post-filter retrieval context to keep only chunks
-    that match the *dominant intent* of the question.
+    Phase-7 minimal context filter.
 
-    This prevents fraud-related chunks from diluting
-    lost/stolen answers, etc.
+    Since the retriever now applies strong topic reranking,
+    we only apply defensive filtering for extreme edge cases.
+
+    If the query has a dominant intent and at least 1 chunk
+    contains that intent explicitly → keep only those.
     """
+
     if not chunks:
         return chunks
 
     q = query.lower()
-    lowered = [c.lower() for c in chunks]
 
-    # LOST / STOLEN
+    def keep_if_contains(keywords):
+        filtered = [c for c in chunks if any(k in c.lower() for k in keywords)]
+        return filtered if filtered else None
+
+    # lost/stolen
     if "lost" in q or "stolen" in q:
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["lost", "stolen", "permanently lost", "misplaced"])
-        ]
-        if topical:
-            return topical
+        exact = keep_if_contains(["lost", "stolen", "permanently lost", "misplaced"])
+        if exact:
+            return exact
 
-    # FRAUD / UNAUTHORIZED / DISPUTE
+    # fraud
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["fraud", "unauthorized", "dispute"])
-        ]
-        if topical:
-            return topical
+        exact = keep_if_contains(["fraud", "unauthorized", "dispute"])
+        if exact:
+            return exact
 
-    # INTERAC / E-TRANSFER
-    if any(k in q for k in ["interac", "e-transfer", "etransfer", "e transfer"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["interac", "e-transfer", "etransfer", "transfer"])
-        ]
-        if topical:
-            return topical
+    # login/reset
+    if any(k in q for k in ["password", "login", "reset", "passcode"]):
+        exact = keep_if_contains(["password", "login", "reset", "passcode"])
+        if exact:
+            return exact
 
-    # PASSWORD / LOGIN / RESET
-    if any(k in q for k in ["password", "login", "reset"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["password", "login", "reset", "passcode"])
-        ]
-        if topical:
-            return topical
+    # e-transfer
+    if any(k in q for k in ["interac", "e-transfer", "etransfer", "transfer"]):
+        exact = keep_if_contains(["interac", "e-transfer", "etransfer", "transfer"])
+        if exact:
+            return exact
 
-    # Fallback: keep original chunks
+    # default: trust retriever order
     return chunks
 
 
@@ -184,11 +185,11 @@ def landing(request: Request):
 def health():
     return {
         "status": "ok",
-        "generator_mode": GEN_MODE,                 # local or groq
-        "retriever_model": "mpnet-pytorch",         # label for now
-        "index_size": retriever.index.ntotal,       # FAISS vector count
-        "embedding_dim": retriever.index.d,         # 768
-        "record_count": len(retriever.metadata),    # # of chunks
+        "generator_mode": GEN_MODE,
+        "retriever_model": "mpnet-pytorch",
+        "index_size": retriever.index.ntotal,
+        "embedding_dim": retriever.index.d,
+        "record_count": len(retriever.metadata),
         "logging_enabled": True,
     }
 
@@ -204,17 +205,11 @@ def ask(
     start_time = time.time()
 
     try:
-        # -------------------------------------------------
-        # 1. Semantic Retrieval (PyTorch MPNet)
-        # -------------------------------------------------
+        # 1. Retrieval
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # -------------------------------------------------
-        # 2. Filter & Clean Retrieval
-        # -------------------------------------------------
+        # 2. Clean + Focus Context
         clean_chunks = clean_retrieval(retrieval_results)
-
-        # 🔎 NEW: focus context by query intent
         clean_chunks = focus_context(query, clean_chunks)
 
         if not clean_chunks:
@@ -245,29 +240,21 @@ def ask(
                 "latency_ms": latency,
             }
 
-        # -------------------------------------------------
-        # 3. Strict-Literal Generation
-        # -------------------------------------------------
+        # 3. Generation (Option A strict literal)
         answer, grounding = generate_answer(query, clean_chunks)
 
         grounding_score = grounding.get("grounding_score", 0.0)
         context_overlap = grounding.get("context_overlap", 0.0)
 
-        # -------------------------------------------------
-        # 4. Extract citations
-        # -------------------------------------------------
+        # 4. Citations
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
 
-        # -------------------------------------------------
         # 5. Retriever confidence
-        # -------------------------------------------------
         confidence = retrieval_results[0].get("confidence", 0.0)
 
         latency = (time.time() - start_time) * 1000
 
-        # -------------------------------------------------
         # 6. Log event
-        # -------------------------------------------------
         log_rag_event(
             query=query,
             answer=answer,
@@ -280,9 +267,7 @@ def ask(
             latency_ms=latency,
         )
 
-        # -------------------------------------------------
-        # 7. Return final response
-        # -------------------------------------------------
+        # 7. Output
         return {
             "query": query,
             "answer": answer,
