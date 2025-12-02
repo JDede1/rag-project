@@ -1,16 +1,14 @@
 """
 evaluate_rag.py
 ---------------------------------------------------------
-Phase 5 Evaluation — Strict Literal Mode RAG
-
 This version:
     • Uses the SAME retrieval logic as the FastAPI backend
-    • Uses the SAME generator logic (strict literal mode + strict topic match)
-    • Uses grounding_details() from generator.py
+    • Uses the SAME strict literal generator (generator.generate_answer)
+    • Uses generator.is_grounded() + grounding_details()
     • Evaluates:
           - known questions  → MUST be grounded
           - unknown questions → MUST say "I don't know."
-    • Produces JSONL evaluation logs identical to Phase 5
+    • Produces JSONL results identical to Phase 5 format
 """
 
 import json
@@ -19,20 +17,25 @@ import argparse
 from pathlib import Path
 from typing import List, Dict
 
-import torch  # Needed because generator uses torch.no_grad()
+import torch  # needed because generator uses torch.no_grad()
 
+# Production components
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer, grounding_details
+from src.generation.generator import (
+    generate_answer,
+    grounding_details,
+    is_grounded,   # <-- REQUIRED FIX
+)
 
 
 # ---------------------------------------------------------
-# Retrieval Cleaner (matches FASTAPI clean_retrieval)
+# Retrieval Cleaner (MUST MATCH main.py EXACTLY)
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
     EXACT MATCH with FastAPI clean_retrieval()
 
-    Sorting by final_score → returning ONLY chunks
+    Sorting by final_score → returning ONLY clean chunk texts.
     """
     if not results:
         return []
@@ -45,8 +48,7 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
         and isinstance(r.get("chunk"), str)
     ]
 
-    chunks = [r["chunk"].strip() for r in strong][:max_items]
-    return chunks
+    return [r["chunk"].strip() for r in strong][:max_items]
 
 
 # ---------------------------------------------------------
@@ -54,11 +56,11 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 # ---------------------------------------------------------
 def _normalize_idk(text: str) -> str:
     """
-    Normalize model outputs to detect variants like:
-    - "I don't know"
-    - "I don’t know."
-    - "I do not know"
-    - "I don't know!"
+    Normalize model outputs to detect variants of:
+        - "I don't know"
+        - "I don’t know."
+        - "I do not know"
+        - "I don't know!"
     """
     if not text:
         return ""
@@ -68,7 +70,7 @@ def _normalize_idk(text: str) -> str:
 
 
 # ---------------------------------------------------------
-# Evaluate One Example
+# Evaluate One Example (STRICT literal-mode)
 # ---------------------------------------------------------
 def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     q_id = example.get("id")
@@ -76,28 +78,35 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     gold_answer = example.get("answer")  # None for unknown
     q_type = example.get("type", "known")
 
-    # ---------- 1. RETRIEVAL ----------
+    # -------------------------------------------------
+    # 1. RETRIEVAL
+    # -------------------------------------------------
     retrieved = retriever.search(question, top_k=top_k)
     clean_chunks = clean_retrieval(retrieved)
 
-    # ---------- 2. GENERATION ----------
+    # -------------------------------------------------
+    # 2. GENERATION (STRICT literal mode)
+    # -------------------------------------------------
     rag_answer, grounding = generate_answer(question, clean_chunks)
 
     grounding_score = grounding.get("grounding_score", 0.0)
     context_overlap = grounding.get("context_overlap", 0.0)
-    grounded_flag = grounding.get("grounded", False)
 
-    # ---------- 3. HALLUCINATION CHECK ----------
+    # -------------------------------------------------
+    # 3. HALLUCINATION CHECK (MUST MATCH backend EXACTLY)
+    # -------------------------------------------------
     normalized_idk = _normalize_idk(rag_answer)
 
     if q_type == "unknown":
-        # Unknown → MUST correctly output “I don't know”
+        # unknown MUST say "I don't know."
         hallucinated = normalized_idk not in {
             "i dont know",
             "i do not know",
         }
+
     else:
-        # Known → MUST be grounded (strict literal mode)
+        # known MUST be grounded (STRICT literal mode)
+        grounded_flag = is_grounded(rag_answer, clean_chunks)
         hallucinated = not grounded_flag
 
     return {
@@ -153,7 +162,7 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
 
 
 # ---------------------------------------------------------
-# CLI
+# CLI ENTRYPOINT
 # ---------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate RAG System")
