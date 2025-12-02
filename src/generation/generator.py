@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py — FINAL PRODUCTION VERSION (Hallucination-Free)
+# generator.py 
 # =========================================================
 
 import os
@@ -81,57 +81,45 @@ def _simple_tokens(text: str) -> List[str]:
 # HARDENED TOPIC MATCHING (FINAL)
 # ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
-    """
-    FINAL VERSION:
-    Deterministic, no false negatives.
-    Lost/stolen → guaranteed match if chunks contain lost/stolen text.
-    Fraud does NOT block lost/stolen.
-    """
 
     if not chunks:
         return False
 
     q = question.lower()
 
-    # -----------------------------------------------------
-    # PRIORITY 1 — LOST / STOLEN (enterprise-critical)
-    # -----------------------------------------------------
+    # LOST / STOLEN
     if "lost" in q or "stolen" in q:
         for ch in chunks:
             c = ch.lower()
-            if "lost" in c or "stolen" in c or "permanently lost" in c or "misplaced" in c:
+            if (
+                "lost" in c or "stolen" in c
+                or "permanently lost" in c
+                or "misplaced" in c
+            ):
                 return True
 
-    # -----------------------------------------------------
-    # PRIORITY 2 — FRAUD
-    # -----------------------------------------------------
+    # FRAUD
     if "fraud" in q or "unauthorized" in q or "dispute" in q:
         for ch in chunks:
             c = ch.lower()
             if "fraud" in c or "unauthorized" in c or "dispute" in c:
                 return True
 
-    # -----------------------------------------------------
-    # PRIORITY 3 — E-TRANSFER
-    # -----------------------------------------------------
+    # E-TRANSFER
     if ("transfer" in q or "e-transfer" in q or "etransfer" in q or "interac" in q):
         for ch in chunks:
             c = ch.lower()
             if "transfer" in c or "interac" in c:
                 return True
 
-    # -----------------------------------------------------
-    # PRIORITY 4 — PASSWORD / LOGIN
-    # -----------------------------------------------------
+    # PASSWORD / LOGIN
     if ("password" in q or "login" in q or "reset" in q):
         for ch in chunks:
             c = ch.lower()
             if "password" in c or "reset" in c or "login" in c:
                 return True
 
-    # -----------------------------------------------------
-    # LAST RESORT — Lexical fallback
-    # -----------------------------------------------------
+    # LEXICAL fallback
     q_tokens = set(_simple_tokens(question))
     for ch in chunks:
         if q_tokens & set(_simple_tokens(ch)):
@@ -191,7 +179,6 @@ def extract_answer(raw: str) -> str:
     if idx != -1:
         t = t[idx:]
 
-    # Remove metadata/system lines
     cleaned = []
     for ln in t.split("\n"):
         s = ln.strip()
@@ -202,7 +189,6 @@ def extract_answer(raw: str) -> str:
 
     text = "\n".join(cleaned)
 
-    # Parse sections
     sections = {"short": [], "details": [], "notes": []}
     current = None
 
@@ -212,9 +198,9 @@ def extract_answer(raw: str) -> str:
 
         if low.startswith("short answer:"):
             current = "short"
-            val = line[len("Short Answer:") :].strip()
-            if val:
-                sections["short"].append(val)
+            v = line[len("Short Answer:") :].strip()
+            if v:
+                sections["short"].append(v)
             continue
 
         if low.startswith("details:"):
@@ -228,16 +214,14 @@ def extract_answer(raw: str) -> str:
         if current:
             sections[current].append(line)
 
-    # Build short answer
     sa = " ".join(sections["short"]).strip() or "I don't know."
     sa = _enforce_single_sentence(sa)
     short = f"Short Answer: {sa}"
 
-    # literal-only bullet lines
     def literal_only(lines):
         out = []
         for l in lines:
-            if "[" in l and "]" in l:  # enforce citation presence
+            if "[" in l and "]" in l:
                 if not l.startswith("•"):
                     l = "• " + l
                 out.append(l)
@@ -246,7 +230,6 @@ def extract_answer(raw: str) -> str:
     details = literal_only(sections["details"])
     notes = literal_only(sections["notes"])
 
-    # citations
     body = "\n".join([short] + details + notes)
     used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
     sources = [f"• CIT:{c}" for c in used] or ["• CIT:1"]
@@ -312,7 +295,7 @@ def _generate_groq(prompt: str) -> str:
         max_tokens=250,
     )
 
-    # FIXED: correct Groq API usage
+    # FIXED
     return out.choices[0].message["content"]
 
 
@@ -331,7 +314,6 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
 
     prompt = build_prompt(question, chunks)
 
-    # LOCAL PHI MODE
     if USE_LOCAL:
         tok, model = _load_local_model()
         enc = tok(prompt, return_tensors="pt").to(model.device)
@@ -349,8 +331,7 @@ def generate_answer(question: str, chunks: List[str]) -> Tuple[str, Dict]:
         raw = tok.decode(out[0][ilen:], skip_special_tokens=True)
         answer = extract_answer(raw)
 
-    # GROQ MODE
-    else:
+    else:  # GROQ MODE
         try:
             raw = _generate_groq(prompt)
             answer = extract_answer(raw)
