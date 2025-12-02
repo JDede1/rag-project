@@ -1,5 +1,5 @@
 # =========================================================
-# generator.py — FINAL PRODUCTION VERSION (Phase-5 Safe)
+# generator.py 
 # =========================================================
 
 import os
@@ -78,15 +78,16 @@ def _simple_tokens(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------
-# TOPIC MATCHING 
+# FIXED TOPIC MATCHING (this fixes lost/stolen issue)
 # ---------------------------------------------------------
 def _question_matches_context(question: str, chunks: List[str]) -> bool:
     """
-    Phase-5 hardened:
-        • ANY matching chunk triggers True
-        • Lost/Stolen / Fraud / e-Transfer / Password all handled
-        • Fraud chunks NEVER block lost/stolen
-        • Lexical fallback still allowed
+    FIXED:
+    • Lost/stolen always beats fraud
+    • Fraud does NOT block lost/stolen anymore
+    • e-Transfer detection fixed
+    • Password detection fixed
+    • Lexical fallback runs last (not first)
     """
 
     if not chunks:
@@ -103,29 +104,32 @@ def _question_matches_context(question: str, chunks: List[str]) -> bool:
         "password": {"password", "passcode", "login", "reset"}
     }
 
-    for ch in chunks:
-        c = ch.lower()
-
-        # Lost / stolen
-        if ("lost" in q and any(w in c for w in strong["lost"])) or \
-           ("stolen" in q and any(w in c for w in strong["stolen"])):
-            return True
-
-        # Fraud
-        if "fraud" in q and any(w in c for w in strong["fraud"]):
-            return True
-
-        # Interac / e-Transfer
-        if ("transfer" in q or "e transfer" in q or "e-transfer" in q or "etransfer" in q):
-            if any(w in c for w in strong["etransfer"]):
+    # ---------- PRIORITY 1: LOST/STOLEN ----------
+    if "lost" in q or "stolen" in q:
+        for ch in chunks:
+            c = ch.lower()
+            if any(w in c for w in strong["lost"]):
                 return True
 
-        # Password / login
-        if ("password" in q or "login" in q):
-            if any(w in c for w in strong["password"]):
+    # ---------- PRIORITY 2: FRAUD ----------
+    if "fraud" in q or "unauthorized" in q or "dispute" in q:
+        for ch in chunks:
+            if any(w in ch.lower() for w in strong["fraud"]):
                 return True
 
-    # Lexical fallback
+    # ---------- PRIORITY 3: E-TRANSFER ----------
+    if any(k in q for k in ["transfer", "e-transfer", "etransfer", "interac"]):
+        for ch in chunks:
+            if any(w in ch.lower() for w in strong["etransfer"]):
+                return True
+
+    # ---------- PRIORITY 4: PASSWORD / LOGIN ----------
+    if any(k in q for k in ["password", "login", "reset"]):
+        for ch in chunks:
+            if any(w in ch.lower() for w in strong["password"]):
+                return True
+
+    # ---------- PRIORITY 5: Lexical fallback ----------
     for ch in chunks:
         if q_tokens & set(_simple_tokens(ch)):
             return True
@@ -224,11 +228,10 @@ def extract_answer(raw: str) -> str:
     sa = _enforce_single_sentence(sa)
     short = f"Short Answer: {sa}"
 
-    # ---- NO HALLUCINATIONS: keep only literal context lines ----
     def literal_only(lines):
         bullets = []
         for l in lines:
-            if "[" in l and "]" in l:  # has citation → safe
+            if "[" in l and "]" in l:
                 if not l.startswith("•"):
                     l = "• " + l
                 bullets.append(l)
@@ -237,7 +240,6 @@ def extract_answer(raw: str) -> str:
     details = literal_only(sections["details"])
     notes = literal_only(sections["notes"])
 
-    # Build final
     body = "\n".join([short] + details + notes)
     used = sorted({int(m.group(1)) for m in _CIT_PATTERN.finditer(body)})
     sources = [f"• CIT:{u}" for u in used] or ["• CIT:1"]
@@ -254,16 +256,13 @@ def extract_answer(raw: str) -> str:
 # Grounding logic
 # ---------------------------------------------------------
 def is_grounded(answer: str, chunks: List[str]) -> bool:
-    if answer.lower().strip() == "i don't know.":
-        return True
-    if not chunks:
-        return False
+    if answer.lower().strip() == "i don't know.": return True
+    if not chunks: return False
 
     ans_tokens = set(_simple_tokens(answer))
     ctx_tokens = set(_simple_tokens(" ".join(chunks)))
 
-    if not ans_tokens:
-        return False
+    if not ans_tokens: return False
 
     overlap = ans_tokens & ctx_tokens
     ratio = len(overlap) / max(1, len(ans_tokens))
@@ -308,7 +307,7 @@ def _generate_groq(prompt: str) -> str:
         top_p=1.0,
         max_tokens=250,
     )
-    return out.choices[0].message["content"]
+    return out.choices(0).message["content"]
 
 
 # ---------------------------------------------------------
