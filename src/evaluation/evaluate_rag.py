@@ -3,14 +3,12 @@ evaluate_rag.py
 =================================================================
 
 Matches backend EXACTLY:
-    • clean_retrieval()
-    • focus_context()
-    • strict-literal generation
-    • grounding_details()
-    • is_grounded()
-    • hallucination detection
-
-This ensures Phase 5 = backend behavioral parity.
+    • clean_retrieval()        — updated
+    • focus_context()          — updated
+    • relaxed topic matching   — generator v7
+    • strict literal fallback
+    • unified grounding logic
+    • unified hallucination logic
 """
 
 import json
@@ -18,21 +16,25 @@ import re
 import argparse
 from pathlib import Path
 
-import torch
-
-# Production imports
+# Retriever & Generator (Phase-7 versions)
 from src.retrieval.search_engine import RbcRetriever
 from src.generation.generator import (
     generate_answer,
-    grounding_details,
     is_grounded,
+    grounding_details,
 )
 
-
 # ---------------------------------------------------------
-# CLEAN RETRIEVAL (must match backend)
+# CLEAN RETRIEVAL 
 # ---------------------------------------------------------
 def clean_retrieval(results, score_threshold=0.32, max_items=4):
+    """
+    EXACT MATCH with backend:
+        • Sort by final_score
+        • Keep strong chunks only
+        • No intent grouping
+        • Generator handles topic validation
+    """
     if not results:
         return []
 
@@ -48,58 +50,49 @@ def clean_retrieval(results, score_threshold=0.32, max_items=4):
 
 
 # ---------------------------------------------------------
-# CONTEXT FOCUS (THE IMPORTANT FIX)
+# CONTEXT FOCUS 
 # ---------------------------------------------------------
 def focus_context(query: str, chunks: list) -> list:
-    """Matches backend focus_context logic EXACTLY."""
+    """
+    EXACT MATCH with backend main.py
+    — strengthened but not overly strict
+    — prevents fraud chunks overriding lost-card chunks
+    — allows fallback to generator topic matching (Phase-7)
+    """
     if not chunks:
         return chunks
 
     q = query.lower()
 
-    # Lost / stolen
+    def topical_match(keywords):
+        m = [c for c in chunks if any(k in c.lower() for k in keywords)]
+        return m if m else None
+
+    lost = topical_match(["lost", "stolen", "misplaced", "permanently lost"])
     if "lost" in q or "stolen" in q:
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in [
-                "lost", "stolen", "permanently lost", "misplaced"
-            ])
-        ]
-        if topical:
-            return topical
+        if lost:
+            return lost
 
-    # Fraud / unauthorized / dispute
+    fraud = topical_match(["fraud", "unauthorized", "dispute"])
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["fraud", "unauthorized", "dispute"])
-        ]
-        if topical:
-            return topical
+        if fraud:
+            return fraud
 
-    # Interac / e-transfer
+    et = topical_match(["interac", "e-transfer", "etransfer", "transfer"])
     if any(k in q for k in ["interac", "e-transfer", "etransfer", "transfer"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["interac", "e-transfer", "etransfer", "transfer"])
-        ]
-        if topical:
-            return topical
+        if et:
+            return et
 
-    # Password / login / reset
+    login = topical_match(["password", "login", "reset", "passcode"])
     if any(k in q for k in ["password", "login", "reset"]):
-        topical = [
-            c for c in chunks
-            if any(k in c.lower() for k in ["password", "login", "reset", "passcode"])
-        ]
-        if topical:
-            return topical
+        if login:
+            return login
 
     return chunks
 
 
 # ---------------------------------------------------------
-# Normalize "I don't know"
+# Normalize IDK
 # ---------------------------------------------------------
 def _normalize_idk(text: str) -> str:
     if not text:
@@ -109,7 +102,7 @@ def _normalize_idk(text: str) -> str:
 
 
 # ---------------------------------------------------------
-# Evaluate a single example  (STRICT)
+# Evaluate a single example
 # ---------------------------------------------------------
 def evaluate_one(example, retriever, top_k):
     qid = example["id"]
@@ -121,16 +114,16 @@ def evaluate_one(example, retriever, top_k):
     retrieved = retriever.search(question, top_k=top_k)
     clean = clean_retrieval(retrieved)
 
-    # 🔥 APPLY FOCUS CONTEXT (backend parity)
+    # 2) Focus context
     clean = focus_context(question, clean)
 
-    # 2) Generator (strict-literal)
+    # 3) Generator
     answer, grounding = generate_answer(question, clean)
 
     gs = grounding.get("grounding_score", 0.0)
     overlap = grounding.get("context_overlap", 0.0)
 
-    # 3) Hallucination logic
+    # 4) Hallucination Logic (Phase-7 rule)
     norm = _normalize_idk(answer)
 
     if q_type == "unknown":
