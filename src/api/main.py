@@ -112,6 +112,63 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
 
 
 # ---------------------------------------------------------
+# TOPIC-FOCUSED CONTEXT (small but critical fix)
+# ---------------------------------------------------------
+def focus_context(query: str, chunks: list) -> list:
+    """
+    Post-filter retrieval context to keep only chunks
+    that match the *dominant intent* of the question.
+
+    This prevents fraud-related chunks from diluting
+    lost/stolen answers, etc.
+    """
+    if not chunks:
+        return chunks
+
+    q = query.lower()
+    lowered = [c.lower() for c in chunks]
+
+    # LOST / STOLEN
+    if "lost" in q or "stolen" in q:
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["lost", "stolen", "permanently lost", "misplaced"])
+        ]
+        if topical:
+            return topical
+
+    # FRAUD / UNAUTHORIZED / DISPUTE
+    if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["fraud", "unauthorized", "dispute"])
+        ]
+        if topical:
+            return topical
+
+    # INTERAC / E-TRANSFER
+    if any(k in q for k in ["interac", "e-transfer", "etransfer", "e transfer"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["interac", "e-transfer", "etransfer", "transfer"])
+        ]
+        if topical:
+            return topical
+
+    # PASSWORD / LOGIN / RESET
+    if any(k in q for k in ["password", "login", "reset"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["password", "login", "reset", "passcode"])
+        ]
+        if topical:
+            return topical
+
+    # Fallback: keep original chunks
+    return chunks
+
+
+# ---------------------------------------------------------
 # Landing Page
 # ---------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
@@ -128,7 +185,7 @@ def health():
     return {
         "status": "ok",
         "generator_mode": GEN_MODE,                 # local or groq
-        "retriever_model": "mpnet-pytorch",         # correct model label
+        "retriever_model": "mpnet-pytorch",         # label for now
         "index_size": retriever.index.ntotal,       # FAISS vector count
         "embedding_dim": retriever.index.d,         # 768
         "record_count": len(retriever.metadata),    # # of chunks
@@ -156,6 +213,9 @@ def ask(
         # 2. Filter & Clean Retrieval
         # -------------------------------------------------
         clean_chunks = clean_retrieval(retrieval_results)
+
+        # 🔎 NEW: focus context by query intent
+        clean_chunks = focus_context(query, clean_chunks)
 
         if not clean_chunks:
             latency = (time.time() - start_time) * 1000
@@ -186,7 +246,7 @@ def ask(
             }
 
         # -------------------------------------------------
-        # 3. Strict-Literal Generation (Option A)
+        # 3. Strict-Literal Generation
         # -------------------------------------------------
         answer, grounding = generate_answer(query, clean_chunks)
 
@@ -274,4 +334,3 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
     )
-
