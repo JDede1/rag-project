@@ -1,14 +1,17 @@
 """
-evaluate_rag.py
----------------------------------------------------------
+evaluate_rag.py 
+==========================================
+
 This version:
-    • Uses the SAME retrieval logic as the FastAPI backend
-    • Uses the SAME strict literal generator (generator.generate_answer)
-    • Uses generator.is_grounded() + grounding_details()
-    • Evaluates:
-          - known questions  → MUST be grounded
-          - unknown questions → MUST say "I don't know."
-    • Produces JSONL results identical to Phase 5 format
+    • 100% matches backend behavior
+    • Includes focus_context() (critical fix)
+    • Uses strict-literal generator (generate_answer)
+    • Uses production grounding logic (is_grounded, grounding_details)
+    • Detects hallucinations exactly like backend & monitoring
+    • Produces JSONL output for Phase 5
+
+Output:
+    results/*.jsonl
 """
 
 import json
@@ -17,25 +20,26 @@ import argparse
 from pathlib import Path
 from typing import List, Dict
 
-import torch  # needed because generator uses torch.no_grad()
+import torch  # required by generator during inference
 
 # Production components
 from src.retrieval.search_engine import RbcRetriever
 from src.generation.generator import (
     generate_answer,
     grounding_details,
-    is_grounded,   # <-- REQUIRED FIX
+    is_grounded,
 )
 
 
-# ---------------------------------------------------------
-# Retrieval Cleaner (MUST MATCH main.py EXACTLY)
-# ---------------------------------------------------------
+# =========================================================
+# CLEAN RETRIEVAL (must match backend)
+# =========================================================
 def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int = 4):
     """
-    EXACT MATCH with FastAPI clean_retrieval()
+    EXACT MATCH with backend clean_retrieval()
 
-    Sorting by final_score → returning ONLY clean chunk texts.
+    Sorts retrieved chunks by final_score and keeps only
+    strong, clean items.
     """
     if not results:
         return []
@@ -51,16 +55,71 @@ def clean_retrieval(results: list, score_threshold: float = 0.32, max_items: int
     return [r["chunk"].strip() for r in strong][:max_items]
 
 
-# ---------------------------------------------------------
-# IDK Normalizer
-# ---------------------------------------------------------
+# =========================================================
+# TOPIC FOCUS (critical fix — must match backend EXACTLY)
+# =========================================================
+def focus_context(query: str, chunks: list) -> list:
+    """
+    Same logic as backend main.py.
+
+    Keeps only context relevant to the dominant intent:
+        - lost/stolen
+        - fraud/dispute
+        - interac/e-transfer
+        - password/login/reset
+    """
+    if not chunks:
+        return chunks
+
+    q = query.lower()
+
+    # LOST / STOLEN
+    if "lost" in q or "stolen" in q:
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["lost", "stolen", "permanently lost", "misplaced"])
+        ]
+        if topical:
+            return topical
+
+    # FRAUD / unauthorized / dispute
+    if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["fraud", "unauthorized", "dispute"])
+        ]
+        if topical:
+            return topical
+
+    # INTERAC / TRANSFER
+    if any(k in q for k in ["interac", "e-transfer", "etransfer", "e transfer", "transfer"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["interac", "transfer", "etransfer", "e-transfer"])
+        ]
+        if topical:
+            return topical
+
+    # PASSWORD / LOGIN / RESET
+    if any(k in q for k in ["password", "login", "reset"]):
+        topical = [
+            c for c in chunks
+            if any(k in c.lower() for k in ["password", "login", "reset", "passcode"])
+        ]
+        if topical:
+            return topical
+
+    # Default fallback
+    return chunks
+
+
+# =========================================================
+# NORMALIZING "I DON'T KNOW"
+# =========================================================
 def _normalize_idk(text: str) -> str:
     """
-    Normalize model outputs to detect variants of:
-        - "I don't know"
-        - "I don’t know."
-        - "I do not know"
-        - "I don't know!"
+    Normalize variations of 'I don't know' so evaluation
+    detects IDK reliably.
     """
     if not text:
         return ""
@@ -69,45 +128,43 @@ def _normalize_idk(text: str) -> str:
     return " ".join(cleaned.split())
 
 
-# ---------------------------------------------------------
-# Evaluate One Example (STRICT literal-mode)
-# ---------------------------------------------------------
+# =========================================================
+# EVALUATE ONE QUESTION
+# =========================================================
 def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     q_id = example.get("id")
     question = example.get("question")
     gold_answer = example.get("answer")  # None for unknown
     q_type = example.get("type", "known")
 
-    # -------------------------------------------------
+    # -----------------------------------------------------
     # 1. RETRIEVAL
-    # -------------------------------------------------
+    # -----------------------------------------------------
     retrieved = retriever.search(question, top_k=top_k)
+
     clean_chunks = clean_retrieval(retrieved)
 
-    # -------------------------------------------------
-    # 2. GENERATION (STRICT literal mode)
-    # -------------------------------------------------
+    # CRITICAL: match backend EXACTLY
+    clean_chunks = focus_context(question, clean_chunks)
+
+    # -----------------------------------------------------
+    # 2. GENERATION (strict literal)
+    # -----------------------------------------------------
     rag_answer, grounding = generate_answer(question, clean_chunks)
 
     grounding_score = grounding.get("grounding_score", 0.0)
     context_overlap = grounding.get("context_overlap", 0.0)
 
-    # -------------------------------------------------
-    # 3. HALLUCINATION CHECK (MUST MATCH backend EXACTLY)
-    # -------------------------------------------------
+    # -----------------------------------------------------
+    # 3. HALLUCINATION (must match backend logic)
+    # -----------------------------------------------------
     normalized_idk = _normalize_idk(rag_answer)
 
     if q_type == "unknown":
-        # unknown MUST say "I don't know."
-        hallucinated = normalized_idk not in {
-            "i dont know",
-            "i do not know",
-        }
-
+        hallucinated = normalized_idk not in {"i dont know", "i do not know"}
     else:
-        # known MUST be grounded (STRICT literal mode)
-        grounded_flag = is_grounded(rag_answer, clean_chunks)
-        hallucinated = not grounded_flag
+        # known → must be grounded
+        hallucinated = not is_grounded(rag_answer, clean_chunks)
 
     return {
         "id": q_id,
@@ -123,47 +180,46 @@ def evaluate_one(example: dict, retriever: RbcRetriever, top_k: int):
     }
 
 
-# ---------------------------------------------------------
-# Main Evaluation Loop
-# ---------------------------------------------------------
+# =========================================================
+# MAIN LOOP
+# =========================================================
 def evaluate(eval_file: Path, output_file: Path, top_k: int):
-    print("Loading retriever + generator...")
+    print("Loading retriever & generator…")
     retriever = RbcRetriever()
-    print("Components loaded.\n")
+    print("Components ready.\n")
 
-    # Load evaluation set
     examples = [json.loads(line) for line in open(eval_file, "r")]
     print(f"Loaded {len(examples)} test questions.\n")
 
     results = [evaluate_one(ex, retriever, top_k) for ex in examples]
 
-    # Save JSONL output
+    # save results
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w") as f:
         for r in results:
             f.write(json.dumps(r) + "\n")
 
-    # Summary
+    # summary
     known = [r for r in results if r["type"] == "known"]
     unknown = [r for r in results if r["type"] == "unknown"]
 
-    known_hall = sum(r["hallucinated"] for r in known)
-    unknown_hall = sum(r["hallucinated"] for r in unknown)
+    known_h = sum(r["hallucinated"] for r in known)
+    unknown_h = sum(r["hallucinated"] for r in unknown)
 
     print("=== Evaluation Summary ===")
     print(f"Total questions:        {len(results)}")
     print(f"Known questions:        {len(known)}")
     print(f"Unknown questions:      {len(unknown)}\n")
-    print(f"Known hallucinations:   {known_hall} / {len(known)}")
-    print(f"Unknown hallucinations: {unknown_hall} / {len(unknown)}\n")
-    print(f"Results saved to: {output_file}\n")
+    print(f"Known hallucinations:   {known_h} / {len(known)}")
+    print(f"Unknown hallucinations: {unknown_h} / {len(unknown)}\n")
+    print(f"Saved to: {output_file}\n")
 
     return results
 
 
-# ---------------------------------------------------------
+# =========================================================
 # CLI ENTRYPOINT
-# ---------------------------------------------------------
+# =========================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate RAG System")
     parser.add_argument("--eval-file", type=str, required=True)
