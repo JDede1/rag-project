@@ -1,15 +1,25 @@
 """
-search_engine.py — MPNet Retriever
-----------------------------------------------------------------
-Fixes:
-    • Fraud chunks outranking lost/stolen chunks
-    • Weak reranking (0.02 boost)
-    • Lack of topic-aware scoring
+search_engine.py — MPNet Retriever (High-Recall + Strong Reranking)
+---------------------------------------------------------------------------
+Upgrades:
+    • FAISS search depth expanded to 30 for high recall
+    • Strong topic-aware reranking (lostcard, fraud, login, etransfer)
+    • Lexical overlap + question-word boosting
+    • Deterministic and fully compatible with generator + evaluation
 
-Additions:
-    • Strong category-aware reranking
-    • Improved lexical overlap weighting
-    • Backward-compatible output structure
+Produces:
+    [
+        {
+            "question": ...,
+            "chunk": ...,
+            "score": <faiss score>,
+            "final_score": <reranked score>,
+            "citation_id": <int>,
+            "topic": <topic label>,
+            "confidence": <float>,
+            ...
+        }
+    ]
 """
 
 import re
@@ -22,7 +32,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # ---------------------------------------------------------
-# Utility Tokenizer (Light, Safe)
+# Utility Tokenizer
 # ---------------------------------------------------------
 def _tokenize(text: str):
     if not text:
@@ -31,8 +41,7 @@ def _tokenize(text: str):
 
 
 # ---------------------------------------------------------
-# Topic classifier for chunks
-# (fast, deterministic, no ML — perfect for reranking)
+# Topic classifiers
 # ---------------------------------------------------------
 def classify_chunk_topic(text: str) -> str:
     t = text.lower()
@@ -70,12 +79,11 @@ def classify_query_topic(q: str) -> str:
     return "general"
 
 
-# Question words boost reranking weight
 QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "can"}
 
 
 # =========================================================
-# RETRIEVER CLASS (Pytorch MPNet + FAISS)
+# RbcRetriever (FAISS + MPNet Encoder)
 # =========================================================
 class RbcRetriever:
     def __init__(self):
@@ -90,7 +98,7 @@ class RbcRetriever:
         if not self.meta_path.exists():
             raise FileNotFoundError(f"Metadata parquet not found: {self.meta_path}")
 
-        # Load FAISS index + metadata
+        # Load index and metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
@@ -98,7 +106,7 @@ class RbcRetriever:
         model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Sanity check embedding dimension
+        # Embedding sanity check
         dim = self.index.d
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != dim:
@@ -112,7 +120,7 @@ class RbcRetriever:
 
 
     # ---------------------------------------------------------
-    # Embed Query (PyTorch MPNet)
+    # Encode query with MPNet
     # ---------------------------------------------------------
     def embed_query(self, text: str) -> np.ndarray:
         if not text or not isinstance(text, str):
@@ -122,23 +130,20 @@ class RbcRetriever:
             self.model.encode([text], convert_to_numpy=True, show_progress_bar=False)
             .astype(np.float32)
         )
-
-        # Normalize for cosine similarity
         faiss.normalize_L2(emb)
-
         return emb
 
 
     # ---------------------------------------------------------
-    # Stage-2 Reranking (Phase-7 Enhanced)
+    # Reranking
     # ---------------------------------------------------------
     def _rerank(self, query: str, results: list):
         q_tokens = set(_tokenize(query))
+        q_topic = classify_query_topic(query)
         question_overlap = q_tokens & QUESTION_WORDS
 
-        q_topic = classify_query_topic(query)
-
         reranked = []
+
         for i, r in enumerate(results):
             chunk = r["chunk"]
             chunk_topic = classify_chunk_topic(chunk)
@@ -146,48 +151,44 @@ class RbcRetriever:
             chunk_tokens = set(_tokenize(chunk))
             lexical_overlap = len(q_tokens & chunk_tokens)
 
-            # Base FAISS score
             base_score = r["score"]
 
-            # ---------------------------------------------------
-            # 1. Stronger lexical boost
-            # ---------------------------------------------------
+            # 1. Strong lexical boost
             lexical_boost = 0.12 * lexical_overlap
 
-            # ---------------------------------------------------
-            # 2. Question-word boost (mild)
-            # ---------------------------------------------------
+            # 2. Mild question-word boost
             qword_boost = 0.05 * (1 if question_overlap else 0)
 
-            # ---------------------------------------------------
-            # 3. Topic alignment boost (NEW — KEY FIX)
-            # ---------------------------------------------------
+            # 3. Topic alignment boost (critical fix)
             topic_boost = 0.0
             if q_topic == chunk_topic:
-                topic_boost = 0.30     # dominant signal
+                topic_boost = 0.30
             elif q_topic != "general" and chunk_topic != "general":
-                topic_boost = -0.10    # push apart conflicting domains
+                topic_boost = -0.10
 
             final_score = float(base_score + lexical_boost + qword_boost + topic_boost)
 
             r["final_score"] = final_score
             r["citation_id"] = i + 1
-            r["topic"] = chunk_topic   # helpful for debugging
+            r["topic"] = chunk_topic
+
             reranked.append(r)
 
         return sorted(reranked, key=lambda x: x["final_score"], reverse=True)
 
 
     # ---------------------------------------------------------
-    # MAIN SEARCH FUNCTION
+    # MAIN SEARCH — High-Recall Version
     # ---------------------------------------------------------
     def search(self, query: str, top_k: int = 5):
         if not query or not isinstance(query, str):
             raise ValueError("Query cannot be empty.")
 
-        # Encode → search FAISS
+        # Expand FAISS recall (Option A)
+        RECALL_K = 30
+
         query_emb = self.embed_query(query)
-        distances, indices = self.index.search(query_emb, top_k)
+        distances, indices = self.index.search(query_emb, RECALL_K)
 
         raw_results = []
         for score, idx in zip(distances[0], indices[0]):
@@ -205,20 +206,23 @@ class RbcRetriever:
                 }
             )
 
-        # Phase-7 reranking
+        # Rerank expanded results
         reranked = self._rerank(query, raw_results)
 
-        # Confidence = mean of top-2 final scores
-        if len(reranked) >= 2:
-            avg = (reranked[0]["final_score"] + reranked[1]["final_score"]) / 2
+        # Clip final results
+        clipped = reranked[:top_k]
+
+        # Assign confidence = mean of top-2 final scores
+        if len(clipped) >= 2:
+            avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
-            avg = reranked[0]["final_score"] if reranked else 0.0
+            avg = clipped[0]["final_score"] if clipped else 0.0
 
         avg = float(avg)
-        for r in reranked:
+        for r in clipped:
             r["confidence"] = avg
 
-        return reranked
+        return clipped
 
 
     # ---------------------------------------------------------
@@ -229,7 +233,7 @@ class RbcRetriever:
         print(f"\nQuery: {query}\n")
         for i, r in enumerate(results, start=1):
             print(f"{i}. ({r['final_score']:.4f}) [topic={r['topic']}] {r['question']}")
-            print(f"   Chunk: {r['chunk'][:140]}...")
+            print(f"   Chunk: {r['chunk'][:160]}...")
             if r.get("url"):
                 print(f"   URL: {r['url']}")
             print(f"   CIT: {r['citation_id']}\n")
