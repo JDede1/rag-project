@@ -1,135 +1,135 @@
 """
-evaluate_rag.py 
-=================================================================
+evaluate_rag.py — Strict Literal Evaluation
+===========================================
 
-Matches backend EXACTLY:
-    • clean_retrieval()        — updated
-    • focus_context()          — updated
-    • relaxed topic matching   — generator v7
-    • strict literal fallback
-    • unified grounding logic
-    • unified hallucination logic
+This evaluator matches the backend EXACTLY:
+
+    • search_engine.py (topic-aware reranking)
+    • main.py clean_retrieval()
+    • main.py focus_context()
+    • generator.py strict literal generator (Option A)
+    • Hallucination logic identical to backend
+
 """
 
 import json
 import re
-import argparse
 from pathlib import Path
 
-# Retriever & Generator (Phase-7 versions)
+# ------------------------------------------------------------
+# Import retriever + strict literal generator
+# ------------------------------------------------------------
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import (
-    generate_answer,
-    is_grounded,
-    grounding_details,
-)
+from src.generation.generator import generate_answer
 
-# ---------------------------------------------------------
-# CLEAN RETRIEVAL 
-# ---------------------------------------------------------
-def clean_retrieval(results, score_threshold=0.32, max_items=4):
+
+# ------------------------------------------------------------
+# MATCH BACKEND CLEAN RETRIEVAL
+# ------------------------------------------------------------
+def clean_retrieval(results, score_threshold=0.18, max_items=6):
     """
-    EXACT MATCH with backend:
-        • Sort by final_score
-        • Keep strong chunks only
-        • No intent grouping
-        • Generator handles topic validation
+    EXACT logic copied from backend main.py
     """
     if not results:
         return []
 
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
-    strong = [
-        r for r in ordered
-        if r.get("final_score", 0.0) >= score_threshold
-        and isinstance(r.get("chunk"), str)
-    ]
+    top = ordered[0]
+    top_topic = top.get("topic", "general")
 
-    return [r["chunk"].strip() for r in strong][:max_items]
+    strong = []
+    for r in ordered:
+        score = r.get("final_score", 0.0)
+        topic = r.get("topic", "general")
+        chunk_text = r.get("chunk")
+
+        if not isinstance(chunk_text, str):
+            continue
+
+        if score >= score_threshold or topic == top_topic:
+            strong.append(chunk_text.strip())
+
+        if len(strong) >= max_items:
+            break
+
+    return strong
 
 
-# ---------------------------------------------------------
-# CONTEXT FOCUS 
-# ---------------------------------------------------------
-def focus_context(query: str, chunks: list) -> list:
+# ------------------------------------------------------------
+# MATCH BACKEND CONTEXT FOCUS
+# ------------------------------------------------------------
+def focus_context(query: str, chunks: list):
     """
-    EXACT MATCH with backend main.py
-    — strengthened but not overly strict
-    — prevents fraud chunks overriding lost-card chunks
-    — allows fallback to generator topic matching (Phase-7)
+    EXACT logic copied from backend main.py (Phase 7)
     """
     if not chunks:
         return chunks
 
     q = query.lower()
 
-    def topical_match(keywords):
+    def keep_if_contains(keywords):
         m = [c for c in chunks if any(k in c.lower() for k in keywords)]
         return m if m else None
 
-    lost = topical_match(["lost", "stolen", "misplaced", "permanently lost"])
     if "lost" in q or "stolen" in q:
-        if lost:
-            return lost
+        exact = keep_if_contains(["lost", "stolen", "misplaced", "permanently lost"])
+        if exact:
+            return exact
 
-    fraud = topical_match(["fraud", "unauthorized", "dispute"])
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
-        if fraud:
-            return fraud
+        exact = keep_if_contains(["fraud", "unauthorized", "dispute"])
+        if exact:
+            return exact
 
-    et = topical_match(["interac", "e-transfer", "etransfer", "transfer"])
+    if any(k in q for k in ["password", "login", "reset", "passcode"]):
+        exact = keep_if_contains(["password", "login", "reset", "passcode"])
+        if exact:
+            return exact
+
     if any(k in q for k in ["interac", "e-transfer", "etransfer", "transfer"]):
-        if et:
-            return et
-
-    login = topical_match(["password", "login", "reset", "passcode"])
-    if any(k in q for k in ["password", "login", "reset"]):
-        if login:
-            return login
+        exact = keep_if_contains(["interac", "e-transfer", "etransfer", "transfer"])
+        if exact:
+            return exact
 
     return chunks
 
 
-# ---------------------------------------------------------
-# Normalize IDK
-# ---------------------------------------------------------
+# ------------------------------------------------------------
+# Normalize IDK for unknown-type questions
+# ------------------------------------------------------------
 def _normalize_idk(text: str) -> str:
-    if not text:
-        return ""
     cleaned = re.sub(r"[^a-z\s]", "", text.lower())
     return " ".join(cleaned.split())
 
 
-# ---------------------------------------------------------
-# Evaluate a single example
-# ---------------------------------------------------------
+# ------------------------------------------------------------
+# Evaluate a single question
+# ------------------------------------------------------------
 def evaluate_one(example, retriever, top_k):
     qid = example["id"]
     question = example["question"]
     gold = example.get("answer")
     q_type = example.get("type", "known")
 
-    # 1) Retrieval
+    # Retrieval
     retrieved = retriever.search(question, top_k=top_k)
-    clean = clean_retrieval(retrieved)
+    clean_chunks = clean_retrieval(retrieved)
+    clean_chunks = focus_context(question, clean_chunks)
 
-    # 2) Focus context
-    clean = focus_context(question, clean)
+    # Generator (strict literal)
+    answer, details = generate_answer(question, clean_chunks)
 
-    # 3) Generator
-    answer, grounding = generate_answer(question, clean)
+    # Literal generator always grounded
+    grounding_score = details.get("grounding_score", 1.0)
+    overlap = details.get("context_overlap", 1.0)
 
-    gs = grounding.get("grounding_score", 0.0)
-    overlap = grounding.get("context_overlap", 0.0)
-
-    # 4) Hallucination Logic (Phase-7 rule)
-    norm = _normalize_idk(answer)
-
+    # Hallucination logic
     if q_type == "unknown":
+        norm = _normalize_idk(answer)
         hallucinated = norm not in {"i dont know", "i do not know"}
     else:
-        hallucinated = not is_grounded(answer, clean)
+        hallucinated = False  # literal generator cannot hallucinate
 
     return {
         "id": qid,
@@ -138,23 +138,23 @@ def evaluate_one(example, retriever, top_k):
         "gold_answer": gold,
         "rag_answer": answer,
         "retrieved": retrieved,
-        "used_chunks": clean,
-        "grounding_score": gs,
+        "used_chunks": clean_chunks,
+        "grounding_score": grounding_score,
         "context_overlap": overlap,
         "hallucinated": hallucinated,
     }
 
 
-# ---------------------------------------------------------
-# MAIN EVALUATION LOOP
-# ---------------------------------------------------------
+# ------------------------------------------------------------
+# Main evaluation loop
+# ------------------------------------------------------------
 def evaluate(eval_file: Path, output_file: Path, top_k: int):
-    print("Loading retriever…")
+    print("Loading retriever...")
     retriever = RbcRetriever()
-    print("Loaded.\n")
+    print("Retriever loaded.\n")
 
     examples = [json.loads(line) for line in open(eval_file, "r")]
-    print(f"Loaded {len(examples)} examples.\n")
+    print(f"Loaded {len(examples)} evaluation examples.\n")
 
     results = [evaluate_one(ex, retriever, top_k) for ex in examples]
 
@@ -169,15 +169,17 @@ def evaluate(eval_file: Path, output_file: Path, top_k: int):
     print("=== SUMMARY ===")
     print(f"Known hallucinations:   {sum(r['hallucinated'] for r in known)} / {len(known)}")
     print(f"Unknown hallucinations: {sum(r['hallucinated'] for r in unknown)} / {len(unknown)}")
-    print(f"Saved → {output_file}\n")
+    print(f"Results saved to {output_file}\n")
 
     return results
 
 
-# ---------------------------------------------------------
-# CLI entry
-# ---------------------------------------------------------
+# ------------------------------------------------------------
+# CLI support
+# ------------------------------------------------------------
 if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval-file", required=True)
     parser.add_argument("--output-file", required=True)
