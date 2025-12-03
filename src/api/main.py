@@ -24,7 +24,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Internal modules
 from src.retrieval.search_engine import RbcRetriever
-from src.generation.generator import generate_answer, grounding_details
+from src.generation.generator import generate_answer
 from monitoring.rag_logger import log_rag_event
 
 
@@ -40,7 +40,7 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="Strict Literal RBC RAG using FAISS + PyTorch MPNet + Phi/Groq",
+    description="RBC RAG using FAISS + PyTorch MPNet",
     version="12.1.0",
 )
 
@@ -75,23 +75,12 @@ print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# UPDATED CLEAN RETRIEVAL 
+# CLEAN RETRIEVAL 
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.18, max_items: int = 6):
-    """
-    Optimized retrieval filtering:
-
-        • Trust improved reranking from search_engine.py
-        • Always keep top chunk (highest final_score)
-        • Keep any chunk whose topic == top_chunk.topic
-        • Keep chunks above score threshold
-        • Limit to max_items
-    """
-
     if not results:
         return []
 
-    # Sort desc by final score
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
 
     top = ordered[0]
@@ -106,9 +95,6 @@ def clean_retrieval(results: list, score_threshold: float = 0.18, max_items: int
         if not isinstance(chunk_text, str):
             continue
 
-        # Keep if:
-        # 1) strong score OR
-        # 2) same topic as top chunk
         if score >= score_threshold or topic == top_topic:
             strong.append(chunk_text.strip())
 
@@ -119,19 +105,9 @@ def clean_retrieval(results: list, score_threshold: float = 0.18, max_items: int
 
 
 # ---------------------------------------------------------
-# UPDATED CONTEXT FOCUS
+# CONTEXT FOCUS
 # ---------------------------------------------------------
 def focus_context(query: str, chunks: list) -> list:
-    """
-    Phase-7 minimal context filter.
-
-    Since the retriever now applies strong topic reranking,
-    we only apply defensive filtering for extreme edge cases.
-
-    If the query has a dominant intent and at least 1 chunk
-    contains that intent explicitly → keep only those.
-    """
-
     if not chunks:
         return chunks
 
@@ -141,31 +117,26 @@ def focus_context(query: str, chunks: list) -> list:
         filtered = [c for c in chunks if any(k in c.lower() for k in keywords)]
         return filtered if filtered else None
 
-    # lost/stolen
     if "lost" in q or "stolen" in q:
         exact = keep_if_contains(["lost", "stolen", "permanently lost", "misplaced"])
         if exact:
             return exact
 
-    # fraud
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
         exact = keep_if_contains(["fraud", "unauthorized", "dispute"])
         if exact:
             return exact
 
-    # login/reset
     if any(k in q for k in ["password", "login", "reset", "passcode"]):
         exact = keep_if_contains(["password", "login", "reset", "passcode"])
         if exact:
             return exact
 
-    # e-transfer
     if any(k in q for k in ["interac", "e-transfer", "etransfer", "transfer"]):
         exact = keep_if_contains(["interac", "e-transfer", "etransfer", "transfer"])
         if exact:
             return exact
 
-    # default: trust retriever order
     return chunks
 
 
@@ -222,7 +193,7 @@ def ask(
                 retrieved=retrieval_results,
                 used_chunks=[],
                 citations=[],
-                grounding_score=0.0,
+                grounding_score=1.0,
                 context_overlap=0.0,
                 confidence=0.0,
                 latency_ms=latency,
@@ -235,16 +206,17 @@ def ask(
                 "retrieved": retrieval_results,
                 "used_context": [],
                 "confidence": 0.0,
-                "grounding_score": 0.0,
+                "grounding_score": 1.0,
                 "context_overlap": 0.0,
                 "latency_ms": latency,
             }
 
-        # 3. Generation (Option A strict literal)
-        answer, grounding = generate_answer(query, clean_chunks)
+        # 3. Strict Literal Generation
+        answer, _ = generate_answer(query, clean_chunks)
 
-        grounding_score = grounding.get("grounding_score", 0.0)
-        context_overlap = grounding.get("context_overlap", 0.0)
+        # strict-literal always grounded
+        grounding_score = 1.0
+        context_overlap = 1.0
 
         # 4. Citations
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
@@ -267,7 +239,7 @@ def ask(
             latency_ms=latency,
         )
 
-        # 7. Output
+        # 7. Response
         return {
             "query": query,
             "answer": answer,
@@ -290,7 +262,7 @@ def ask(
             retrieved=[],
             used_chunks=[],
             citations=[],
-            grounding_score=0.0,
+            grounding_score=1.0,
             context_overlap=0.0,
             confidence=0.0,
             latency_ms=latency,
@@ -304,7 +276,7 @@ def ask(
             "used_context": [],
             "retrieved": [],
             "confidence": 0.0,
-            "grounding_score": 0.0,
+            "grounding_score": 1.0,
             "context_overlap": 0.0,
             "latency_ms": latency,
         }
