@@ -1,37 +1,26 @@
-# =======================
 # Core Python Utilities
-# =======================
 pandas==2.3.2
 numpy==1.26.4
 pyarrow
 fastparquet
 
-# =======================
 # API + Server
-# =======================
 fastapi
 uvicorn[standard]
 requests
 
-# =======================
 # Embeddings + Retrieval
-# =======================
 faiss-cpu
-sentence-transformers
-torch
+torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+transformers==4.37.2
+sentence-transformers==2.2.2
 
-# =======================
 # ONNX Runtime (Cloud Run)
-# =======================
 onnxruntime
 
-# =======================
 # Cloud + Utils
-# =======================
 python-dotenv
 
-# =======================
 # Monitoring Dashboard
-# =======================
 streamlit
 plotly
