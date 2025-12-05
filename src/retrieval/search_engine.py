@@ -1,34 +1,35 @@
 """
-search_engine.py — MPNet Retriever (High-Recall + Strong Reranking)
+Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
 ---------------------------------------------------------------------------
-Upgrades:
-    • FAISS search depth expanded to 30 for high recall
-    • Strong topic-aware reranking (lostcard, fraud, login, etransfer)
-    • Lexical overlap + question-word boosting
-    • Deterministic and fully compatible with generator + evaluation
+Modes:
+    • Local (default) — SentenceTransformer MPNet (full accuracy)
+    • Cloud Run — ONNX Runtime MPNet encoder (fast, lightweight, no HF downloads)
 
-Produces:
-    [
-        {
-            "question": ...,
-            "chunk": ...,
-            "score": <faiss score>,
-            "final_score": <reranked score>,
-            "citation_id": <int>,
-            "topic": <topic label>,
-            "confidence": <float>,
-            ...
-        }
-    ]
+Selection:
+    Set DEPLOY_ENV=cloud in Cloud Run
+    Otherwise uses local MPNet.
+
+This file preserves:
+    • FAISS high-recall search (30 candidates)
+    • Topic-aware reranking
+    • Lexical overlap + question word boosts
+    • Confidence scoring
+    • Identical output structure (no breaking changes)
 """
 
+import os
 import re
 from pathlib import Path
 
 import faiss
 import numpy as np
 import pandas as pd
+
+# Local MPNet (optional on cloud)
 from sentence_transformers import SentenceTransformer
+
+# ONNX encoder (for Cloud Run)
+import onnxruntime as ort
 
 
 # ---------------------------------------------------------
@@ -83,10 +84,13 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 
 
 # =========================================================
-# RbcRetriever (FAISS + MPNet Encoder)
+# Hybrid Retriever (Local MPNet + Cloud ONNX)
 # =========================================================
 class RbcRetriever:
     def __init__(self):
+        # -----------------------------------------------------
+        # Load FAISS + metadata
+        # -----------------------------------------------------
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
@@ -98,41 +102,112 @@ class RbcRetriever:
         if not self.meta_path.exists():
             raise FileNotFoundError(f"Metadata parquet not found: {self.meta_path}")
 
-        # Load index and metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
-        # Load PyTorch MPNet encoder
+        self.faiss_dim = self.index.d
+        print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors)")
+
+        # -----------------------------------------------------
+        # Determine deployment mode
+        # -----------------------------------------------------
+        self.deploy_env = os.getenv("DEPLOY_ENV", "local").lower()
+
+        if self.deploy_env == "cloud":
+            print("[Retriever] DEPLOY_ENV=cloud → Using ONNX Runtime encoder")
+            self._load_onnx_encoder()
+        else:
+            print("[Retriever] DEPLOY_ENV=local → Using SentenceTransformer MPNet")
+            self._load_local_encoder()
+
+    # =========================================================
+    # LOCAL MODE — SentenceTransformer MPNet
+    # =========================================================
+    def _load_local_encoder(self):
         model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Embedding sanity check
-        dim = self.index.d
+        # Validate embedding dimension
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
-        if test_emb.shape[1] != dim:
+        if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"Embedding dimension mismatch: FAISS dim={dim}, MPNet dim={test_emb.shape[1]}"
+                f"Local MPNet dim {test_emb.shape[1]} does not match FAISS dim {self.faiss_dim}"
             )
 
-        print(f"[Retriever] Loaded FAISS index: {self.index.ntotal} vectors")
-        print(f"[Retriever] Loaded metadata:    {len(self.metadata)} rows")
-        print(f"[Retriever] MPNet model loaded: {model_name}")
+        self.encoder_type = "mpnet_local"
+        print(f"[Retriever] Local MPNet loaded: {model_name}")
 
+    # =========================================================
+    # CLOUD MODE — ONNX Runtime (MPNet)
+    # =========================================================
+    def _load_onnx_encoder(self):
+        """
+        Expects:
+            data/index/mpnet.onnx
+            data/index/tokenizer.json
+        """
+        base_dir = Path(__file__).resolve().parents[2]
+        onnx_dir = base_dir / "data" / "index"
 
-    # ---------------------------------------------------------
-    # Encode query with MPNet
-    # ---------------------------------------------------------
-    def embed_query(self, text: str) -> np.ndarray:
-        if not text or not isinstance(text, str):
-            raise ValueError("Query text must be a non-empty string.")
+        self.onnx_path = onnx_dir / "mpnet.onnx"
+        self.tokenizer_path = onnx_dir / "tokenizer.json"
 
-        emb = (
-            self.model.encode([text], convert_to_numpy=True, show_progress_bar=False)
-            .astype(np.float32)
+        if not self.onnx_path.exists():
+            raise FileNotFoundError(f"ONNX model missing: {self.onnx_path}")
+        if not self.tokenizer_path.exists():
+            raise FileNotFoundError(f"Tokenizer missing: {self.tokenizer_path}")
+
+        self.ort_session = ort.InferenceSession(
+            str(self.onnx_path),
+            providers=["CPUExecutionProvider"]
         )
+
+        from transformers import AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
+
+        # Validate output dimension
+        dummy = self._encode_onnx_embeddings("test")
+        if dummy.shape[1] != self.faiss_dim:
+            raise ValueError(
+                f"ONNX embedding dim {dummy.shape[1]} does not match FAISS dim {self.faiss_dim}"
+            )
+
+        self.encoder_type = "mpnet_onnx"
+        print(f"[Retriever] ONNX encoder loaded: {self.onnx_path}")
+
+    # =========================================================
+    # ONNX embedding
+    # =========================================================
+    def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
+        tokens = self.tokenizer(
+            text,
+            return_tensors="np",
+            padding=True,
+            truncation=True
+        )
+
+        ort_inputs = {k: v for k, v in tokens.items()}
+        ort_out = self.ort_session.run(None, ort_inputs)[0]
+
+        emb = ort_out.astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
 
+    # =========================================================
+    # Hybrid interface — identical return output
+    # =========================================================
+    def embed_query(self, text: str) -> np.ndarray:
+        if not text or not isinstance(text, str):
+            raise ValueError("Query must be a non-empty string.")
+
+        if self.encoder_type == "mpnet_onnx":
+            return self._encode_onnx_embeddings(text)
+        else:
+            emb = self.model.encode(
+                [text], convert_to_numpy=True, show_progress_bar=False
+            ).astype(np.float32)
+            faiss.normalize_L2(emb)
+            return emb
 
     # ---------------------------------------------------------
     # Reranking
@@ -153,13 +228,9 @@ class RbcRetriever:
 
             base_score = r["score"]
 
-            # 1. Strong lexical boost
             lexical_boost = 0.12 * lexical_overlap
-
-            # 2. Mild question-word boost
             qword_boost = 0.05 * (1 if question_overlap else 0)
 
-            # 3. Topic alignment boost (critical fix)
             topic_boost = 0.0
             if q_topic == chunk_topic:
                 topic_boost = 0.30
@@ -176,25 +247,23 @@ class RbcRetriever:
 
         return sorted(reranked, key=lambda x: x["final_score"], reverse=True)
 
-
-    # ---------------------------------------------------------
-    # MAIN SEARCH — High-Recall Version
-    # ---------------------------------------------------------
+    # =========================================================
+    # MAIN SEARCH — High Recall (FAISS)
+    # =========================================================
     def search(self, query: str, top_k: int = 5):
-        if not query or not isinstance(query, str):
+        if not query.strip():
             raise ValueError("Query cannot be empty.")
 
-        # Expand FAISS recall (Option A)
         RECALL_K = 30
 
         query_emb = self.embed_query(query)
         distances, indices = self.index.search(query_emb, RECALL_K)
 
-        raw_results = []
+        raw = []
         for score, idx in zip(distances[0], indices[0]):
             row = self.metadata.iloc[idx]
 
-            raw_results.append(
+            raw.append(
                 {
                     "question": row.get("question", ""),
                     "chunk": row.get("chunk", ""),
@@ -206,13 +275,10 @@ class RbcRetriever:
                 }
             )
 
-        # Rerank expanded results
-        reranked = self._rerank(query, raw_results)
-
-        # Clip final results
+        reranked = self._rerank(query, raw)
         clipped = reranked[:top_k]
 
-        # Assign confidence = mean of top-2 final scores
+        # Confidence = avg of top2 final scores
         if len(clipped) >= 2:
             avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
@@ -223,7 +289,6 @@ class RbcRetriever:
             r["confidence"] = avg
 
         return clipped
-
 
     # ---------------------------------------------------------
     # Pretty Print Debug Utility
