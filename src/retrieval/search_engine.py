@@ -6,15 +6,15 @@ Modes:
     • Cloud Run — ONNX Runtime MPNet encoder (fast, lightweight, no HF downloads)
 
 Selection:
-    Set DEPLOY_ENV=cloud in Cloud Run
-    Otherwise uses local MPNet.
+    Cloud Run:
+        GEN_MODE=groq  (already true in your deployment)
+        → Forces ONNX-only mode
 
-This file preserves:
-    • FAISS high-recall search (30 candidates)
-    • Topic-aware reranking
-    • Lexical overlap + question word boosts
-    • Confidence scoring
-    • Identical output structure (no breaking changes)
+    Local development:
+        DEPLOY_ENV=local (default)
+        → Uses SentenceTransformer
+
+This prevents Cloud Run from downloading HF models.
 """
 
 import os
@@ -25,7 +25,7 @@ import faiss
 import numpy as np
 import pandas as pd
 
-# Local MPNet encoder (only used when DEPLOY_ENV != cloud)
+# Local MPNet encoder (only used when safe locally)
 from sentence_transformers import SentenceTransformer
 
 
@@ -85,9 +85,6 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        # -----------------------------------------------------
-        # Load FAISS + metadata
-        # -----------------------------------------------------
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
@@ -106,15 +103,19 @@ class RbcRetriever:
         print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors)")
 
         # -----------------------------------------------------
-        # Determine deployment mode
+        # Correct Cloud Run environment detection
         # -----------------------------------------------------
-        self.deploy_env = os.getenv("DEPLOY_ENV", "local").lower()
+        # Cloud Run sets GEN_MODE=groq — so treat that as cloud mode
+        is_cloud = (
+            os.getenv("DEPLOY_ENV", "").lower() == "cloud"
+            or os.getenv("GEN_MODE", "").lower() == "groq"
+        )
 
-        if self.deploy_env == "cloud":
-            print("[Retriever] DEPLOY_ENV=cloud → Using ONNX Runtime encoder")
+        if is_cloud:
+            print("[Retriever] Cloud mode detected → Using ONNX Runtime encoder")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] DEPLOY_ENV=local → Using SentenceTransformer MPNet")
+            print("[Retriever] Local mode → Using SentenceTransformer MPNet")
             self._load_local_encoder()
 
     # =========================================================
@@ -124,7 +125,6 @@ class RbcRetriever:
         model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Validate embedding dimension
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
@@ -138,17 +138,10 @@ class RbcRetriever:
     # CLOUD MODE — ONNX Runtime (MPNet)
     # =========================================================
     def _load_onnx_encoder(self):
-        """
-        Loads ONNX MPNet + tokenizer only in cloud environment.
-        Avoids importing onnxruntime in local mode.
-        """
         try:
             import onnxruntime as ort
         except Exception:
-            raise RuntimeError(
-                "ONNXRuntime is required in cloud mode but is missing.\n"
-                "Add to requirements.txt: onnxruntime"
-            )
+            raise RuntimeError("ONNXRuntime required in cloud. Add to requirements.txt.")
 
         base_dir = Path(__file__).resolve().parents[2]
         onnx_dir = base_dir / "data" / "index"
@@ -169,7 +162,6 @@ class RbcRetriever:
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
 
-        # Validate ONNX embedding dim
         dummy = self._encode_onnx_embeddings("test")
         if dummy.shape[1] != self.faiss_dim:
             raise ValueError(
@@ -259,7 +251,7 @@ class RbcRetriever:
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
-        RECALL_K = 30  # high recall
+        RECALL_K = 30
 
         query_emb = self.embed_query(query)
         distances, indices = self.index.search(query_emb, RECALL_K)
@@ -283,7 +275,6 @@ class RbcRetriever:
         reranked = self._rerank(query, raw)
         clipped = reranked[:top_k]
 
-        # Confidence heuristic = avg of top-2 final scores
         if len(clipped) >= 2:
             avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
@@ -309,7 +300,6 @@ class RbcRetriever:
             print(f"   CIT: {r['citation_id']}\n")
 
 
-# Standalone Test
 if __name__ == "__main__":
     retriever = RbcRetriever()
     retriever.pretty_print("How do I report a lost credit card?", top_k=5)
