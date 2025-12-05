@@ -15,6 +15,9 @@ torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
 transformers==4.37.2
 sentence-transformers==2.2.2
 
+# Critical compatibility fix
+huggingface-hub==0.16.4
+
 # ONNX Runtime (Cloud Run)
 onnxruntime
 
