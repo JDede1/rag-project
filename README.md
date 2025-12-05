@@ -239,40 +239,10 @@ This behavior ensures:
 
 ## 🧭 Architecture
 
-Your RAG system follows a **clean, modular, and fully explainable architecture**, designed for correctness, transparency, and cloud-ready deployment.
-
-It consists of two independent services:
-
-1. **Backend (FastAPI) — Retrieval + Generation**
-2. **Frontend (Streamlit) — User Chat Interface**
-
-Connected using a **Cloudflare tunnel** for secure public access.
-
-```mermaid
-flowchart TD
-    User[User Browser]
-    Streamlit[Streamlit UI]
-    FastAPI[FastAPI Backend]
-    Retriever[RbcRetriever FAISS]
-    Generator[Answer Generator]
-    LLM[Phi-3 Mini LLM]
-    Offline[Offline Pipeline]
-
-    User --> Streamlit --> FastAPI --> Retriever --> Generator --> LLM
-    LLM --> Generator --> User
-
-    Offline --> Retriever
-```
-
-
----
-
-## 🔹 **High-Level System Overview**
-
 ```mermaid
 flowchart TD
 
-    %% STYLE
+    %% STYLE DEFINITIONS
     classDef phase fill:#f3f2ff,stroke:#4b4bff,stroke-width:1px,color:#000,border-radius:6px
     classDef component fill:#ffffff,stroke:#6b7280,stroke-width:1px,color:#000,border-radius:6px
     classDef cloud fill:#e0f7ff,stroke:#0ea5e9,stroke-width:1px,color:#000,border-radius:6px
@@ -281,7 +251,7 @@ flowchart TD
     %% PHASE 1: SCRAPER
     A1([Playwright Scraper]):::component
     A2([Raw RBC FAQ HTML]):::db
-    subgraph P1[PHASE 1 — SCRAPING & VALIDATION]
+    subgraph P1[PHASE 1 — SCRAPING AND VALIDATION]
         A1 --> A2
     end
     class P1 phase
@@ -299,14 +269,14 @@ flowchart TD
     class P2 phase
 
     %% PHASE 3: EMBEDDINGS + FAISS
-    C1([MPNet Encoder (SentenceTransformers)]):::component
+    C1([MPNet Encoder]):::component
     C2([generate_embeddings.py]):::component
     C3([build_faiss_index.py]):::component
     C4([rbc_embeddings.npy]):::db
     C5([rbc_faiss.index]):::db
     C6([rbc_metadata.parquet]):::db
 
-    subgraph P3[PHASE 3 — EMBEDDINGS + FAISS]
+    subgraph P3[PHASE 3 — EMBEDDINGS AND FAISS]
         B5 --> C2
         C2 --> C4
         C2 --> C6
@@ -318,9 +288,9 @@ flowchart TD
     %% PHASE 3.5 — ONNX EXPORT
     D1([export_mpnet_onnx.py]):::component
     D2([mpnet.onnx]):::db
-    D3([tokenizer.json + config.json]):::db
+    D3([tokenizer and config files]):::db
 
-    subgraph P35[PHASE 3.5 — MPNet → ONNX (Cloud Optimized)]
+    subgraph P35[PHASE 3.5 — MPNet TO ONNX]
         C1 --> D1 --> D2
         D1 --> D3
     end
@@ -330,15 +300,15 @@ flowchart TD
     E1([Hybrid RbcRetriever]):::component
     E2([Local MPNet Encoder]):::component
     E3([ONNXRuntime MPNet Encoder]):::component
-    E4([FAISS High-Recall Search]):::component
+    E4([FAISS High Recall Search]):::component
 
-    subgraph P4[PHASE 4 — HYBRID RETRIEVER (Local + Cloud)]
+    subgraph P4[PHASE 4 — HYBRID RETRIEVER]
         C5 --> E4
         C6 --> E1
         E1 --> E4
 
-        E1 -->|DEPLOY_ENV=local| E2
-        E1 -->|DEPLOY_ENV=cloud| E3
+        E1 -->|DEPLOY_ENV local| E2
+        E1 -->|DEPLOY_ENV cloud| E3
 
         D2 --> E3
         D3 --> E3
@@ -351,7 +321,7 @@ flowchart TD
     F3([Cloudflare Tunnel]):::cloud
     F4([Cloud Run Service]):::cloud
 
-    subgraph P56[PHASE 5–6 — RAG Answer Generation + Serving]
+    subgraph P56[PHASE 5 AND 6 — GENERATION AND SERVING]
         E1 --> F1
         F1 --> F2
         F2 --> F3 --> F4
@@ -360,9 +330,9 @@ flowchart TD
 
     %% PHASE 7: MONITORING
     G1([Streamlit Dashboard]):::component
-    G2([RAG Logs / Metrics]):::db
+    G2([RAG Logs and Metrics]):::db
 
-    subgraph P7[PHASE 7 — Monitoring & Analytics]
+    subgraph P7[PHASE 7 — MONITORING AND ANALYTICS]
         F2 --> G2
         G2 --> G1
     end
@@ -372,9 +342,9 @@ flowchart TD
     H1([Dockerfile]):::component
     H2([cloudbuild.yaml]):::component
     H3([Artifact Registry]):::cloud
-    H4([Cloud Run Deployment Script]):::component
+    H4([Cloud Run Deploy Script]):::component
 
-    subgraph P8[PHASE 8 — Docker Build & Cloud Run Deployment]
+    subgraph P8[PHASE 8 — DOCKER BUILD AND CLOUD RUN DEPLOYMENT]
         F2 --> H1
         H1 --> H2 --> H3 --> H4 --> F4
     end
@@ -1533,6 +1503,7 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
 
