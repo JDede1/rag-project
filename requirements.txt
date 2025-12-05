@@ -1,46 +1,17 @@
-# ============================================================
-# RAG Backend — Requirements for Cloud Run (CPU-only)
-# ============================================================
-
-# ------------------------------
-# MPNet Embedding Model
-# ------------------------------
-sentence-transformers==2.4.0       # Last version compatible with CPU + transformers<4.34
-transformers==4.33.3              # Compatible with sentence-transformers 2.4.0
-torch==2.1.2                      # CPU-only, Cloud Run compatible
-
-# ------------------------------
-# Vector Search (FAISS CPU)
-# ------------------------------
 faiss-cpu==1.8.0.post1
 
-# ------------------------------
-# FastAPI Backend
-# ------------------------------
-fastapi==0.121.1
-uvicorn==0.38.0
-python-multipart==0.0.9
-jinja2==3.1.4
+sentence-transformers==2.5.1
+transformers==4.36.2
+huggingface_hub==0.20.3
 
-# ------------------------------
-# Data Handling
-# ------------------------------
 numpy==1.26.4
-pandas==2.2.2
-pyarrow==17.0.0
+pandas==2.3.2
+pyarrow==14.0.2
 fastparquet==2024.5.0
 
-# ------------------------------
-# Networking / Utilities
-# ------------------------------
-requests==2.32.3
+fastapi==0.103.2
+uvicorn==0.23.2
+jinja2==3.1.4
+python-multipart==0.0.9
 
-# ------------------------------
-# JSON / Validation
-# ------------------------------
-pydantic==2.7.1
-
-# ------------------------------
-# Groq LLM Provider
-# ------------------------------
-groq==0.4.1
+requests==2.31.0
