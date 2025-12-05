@@ -1,25 +1,33 @@
-# ============================================================
-# Cloud Build for RAG Backend (Docker → Artifact Registry)
-# With forced no-cache rebuild
-# ============================================================
+# ================================================
+# Cloud Build — RAG Backend (No Cache Build)
+# ================================================
 
+# Disable Cloud Build Docker cache indirectly by enabling BuildKit
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: "E2_HIGHCPU_8"
+  env:
+    - DOCKER_BUILDKIT=1
+
+# ================================================
+# Build + Push Steps
+# ================================================
 steps:
-  # ----------------------------------------------------------
-  # 1) Build Docker image with NO CACHE
-  # ----------------------------------------------------------
+  # ------------------------------------------------
+  # 1. Build Docker image (no cache)
+  # ------------------------------------------------
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
         "build",
-        "--no-cache",
-        "--pull",
         "-t", "$_AR_IMAGE",
+        "--no-cache",
         "."
       ]
 
-  # ----------------------------------------------------------
-  # 2) Push Docker image to Artifact Registry
-  # ----------------------------------------------------------
+  # ------------------------------------------------
+  # 2. Push image to Artifact Registry
+  # ------------------------------------------------
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -27,5 +35,8 @@ steps:
         "$_AR_IMAGE"
       ]
 
+# ================================================
+# Output image for downstream deployment steps
+# ================================================
 images:
   - "$_AR_IMAGE"
