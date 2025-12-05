@@ -1,17 +1,37 @@
-faiss-cpu==1.8.0.post1
-
-sentence-transformers==2.5.1
-transformers==4.36.2
-huggingface_hub==0.20.3
-
-numpy==1.26.4
+# =======================
+# Core Python Utilities
+# =======================
 pandas==2.3.2
-pyarrow==14.0.2
-fastparquet==2024.5.0
+numpy==1.26.4
+pyarrow
+fastparquet
 
-fastapi==0.103.2
-uvicorn==0.23.2
-jinja2==3.1.4
-python-multipart==0.0.9
+# =======================
+# API + Server
+# =======================
+fastapi
+uvicorn[standard]
+requests
 
-requests==2.31.0
+# =======================
+# Embeddings + Retrieval
+# =======================
+faiss-cpu
+sentence-transformers
+torch
+
+# =======================
+# ONNX Runtime (Cloud Run)
+# =======================
+onnxruntime
+
+# =======================
+# Cloud + Utils
+# =======================
+python-dotenv
+
+# =======================
+# Monitoring Dashboard
+# =======================
+streamlit
+plotly
