@@ -269,78 +269,119 @@ flowchart TD
 
 ## 🔹 **High-Level System Overview**
 
-### **User → Streamlit UI → FastAPI /ask → FAISS Retriever → Phi-3.5 Generator → UI**
-
 ```mermaid
 flowchart TD
-    User[User]
-    UI[Streamlit UI]
-    API[FastAPI /ask Endpoint]
-    RET[FAISS Retriever]
-    GEN[Grounded Generator]
-    LLM[Phi-3 Mini]
 
-    User --> UI --> API --> RET --> GEN --> LLM
-    LLM --> GEN --> UI
-```
+    %% STYLE
+    classDef phase fill:#f3f2ff,stroke:#4b4bff,stroke-width:1px,color:#000,border-radius:6px
+    classDef component fill:#ffffff,stroke:#6b7280,stroke-width:1px,color:#000,border-radius:6px
+    classDef cloud fill:#e0f7ff,stroke:#0ea5e9,stroke-width:1px,color:#000,border-radius:6px
+    classDef db fill:#fef9c3,stroke:#facc15,stroke-width:1px,color:#000,border-radius:6px
 
----
+    %% PHASE 1: SCRAPER
+    A1([Playwright Scraper]):::component
+    A2([Raw RBC FAQ HTML]):::db
+    subgraph P1[PHASE 1 — SCRAPING & VALIDATION]
+        A1 --> A2
+    end
+    class P1 phase
 
-## 🔹 **Data Processing Flow**
+    %% PHASE 2: PREPROCESSING
+    B1([clean_rbc_faqs.py]):::component
+    B2([normalize_faqs.py]):::component
+    B3([split_compound_faqs.py]):::component
+    B4([chunk_text.py]):::component
+    B5([rbc_faq_chunks.parquet]):::db
 
-From raw HTML → structured dataset → embeddings → FAISS → RAG pipeline.
+    subgraph P2[PHASE 2 — TEXT PREPROCESSING]
+        A2 --> B1 --> B2 --> B3 --> B4 --> B5
+    end
+    class P2 phase
 
-```mermaid
-flowchart LR
+    %% PHASE 3: EMBEDDINGS + FAISS
+    C1([MPNet Encoder (SentenceTransformers)]):::component
+    C2([generate_embeddings.py]):::component
+    C3([build_faiss_index.py]):::component
+    C4([rbc_embeddings.npy]):::db
+    C5([rbc_faiss.index]):::db
+    C6([rbc_metadata.parquet]):::db
 
-    %% PHASE 1 — SCRAPING
-    RawHTML[Raw RBC FAQ Pages - Playwright Scraper]
-    RawHTML --> JSON[Raw JSON Export]
+    subgraph P3[PHASE 3 — EMBEDDINGS + FAISS]
+        B5 --> C2
+        C2 --> C4
+        C2 --> C6
+        C4 --> C3
+        C3 --> C5
+    end
+    class P3 phase
 
-    %% PHASE 2 — PREPROCESSING
-    JSON --> Clean[Clean FAQs]
-    Clean --> Normalize[Normalize Questions and Answers]
-    Normalize --> Split[Split Compound FAQs]
-    Split --> Chunk[Chunk into RAG-Friendly Segments]
+    %% PHASE 3.5 — ONNX EXPORT
+    D1([export_mpnet_onnx.py]):::component
+    D2([mpnet.onnx]):::db
+    D3([tokenizer.json + config.json]):::db
 
-    %% PHASE 3 — EMBEDDINGS + INDEX
-    Chunk --> Embeddings[MPNet Embeddings]
-    Embeddings --> FAISS[(FAISS Index)]
-    Chunk --> Metadata[Metadata Store - Parquet]
+    subgraph P35[PHASE 3.5 — MPNet → ONNX (Cloud Optimized)]
+        C1 --> D1 --> D2
+        D1 --> D3
+    end
+    class P35 phase
 
-    %% READY FOR RAG
-    FAISS --> ReadyIndex[RAG-Ready Index]
-    Metadata --> ReadyIndex
+    %% PHASE 4: HYBRID RETRIEVER
+    E1([Hybrid RbcRetriever]):::component
+    E2([Local MPNet Encoder]):::component
+    E3([ONNXRuntime MPNet Encoder]):::component
+    E4([FAISS High-Recall Search]):::component
 
-    %% PHASE 5 — EVALUATION
-    ReadyIndex --> Eval[Evaluation Dataset - Phase 5]
-    Eval --> Metrics[Grounding and Hallucination Metrics]
-```
+    subgraph P4[PHASE 4 — HYBRID RETRIEVER (Local + Cloud)]
+        C5 --> E4
+        C6 --> E1
+        E1 --> E4
 
+        E1 -->|DEPLOY_ENV=local| E2
+        E1 -->|DEPLOY_ENV=cloud| E3
 
----
+        D2 --> E3
+        D3 --> E3
+    end
+    class P4 phase
 
-## 🔹 **Sequence Diagram — Full Query Lifecycle**
+    %% PHASE 5–6: GENERATOR + BACKEND
+    F1([Strict Literal Generator]):::component
+    F2([FastAPI Backend]):::component
+    F3([Cloudflare Tunnel]):::cloud
+    F4([Cloud Run Service]):::cloud
 
-A detailed step-by-step of how a query moves through the system:
+    subgraph P56[PHASE 5–6 — RAG Answer Generation + Serving]
+        E1 --> F1
+        F1 --> F2
+        F2 --> F3 --> F4
+    end
+    class P56 phase
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User
-    participant UI as Streamlit<br/>Chat UI
-    participant API as FastAPI<br/>Backend
-    participant RET as Retriever<br/>(FAISS + Metadata)
-    participant GEN as Phi-3 Mini<br/>Generator
+    %% PHASE 7: MONITORING
+    G1([Streamlit Dashboard]):::component
+    G2([RAG Logs / Metrics]):::db
 
-    U->>UI: Ask question
-    UI->>API: GET /ask?query=...
-    API->>RET: Retrieve top-k documents
-    RET-->>API: Return questions, answers, URLs, scores
-    API->>GEN: Send context + formatted prompt
-    GEN-->>API: Return grounded answer
-    API-->>UI: Send response + evidence
-    UI-->>U: Display answer + sidebar evidence
+    subgraph P7[PHASE 7 — Monitoring & Analytics]
+        F2 --> G2
+        G2 --> G1
+    end
+    class P7 phase
+
+    %% PHASE 8: CLOUD DEPLOYMENT
+    H1([Dockerfile]):::component
+    H2([cloudbuild.yaml]):::component
+    H3([Artifact Registry]):::cloud
+    H4([Cloud Run Deployment Script]):::component
+
+    subgraph P8[PHASE 8 — Docker Build & Cloud Run Deployment]
+        F2 --> H1
+        H1 --> H2 --> H3 --> H4 --> F4
+    end
+    class P8 phase
+
+    %% FINAL USER FLOW
+    User([User Query]):::component --> F4 --> F2 --> E1 --> F1 --> F2 --> UserResponse([Final Answer]):::component
 ```
 
 ---
@@ -1492,6 +1533,7 @@ This project uses publicly available RBC FAQ content for **educational and resea
 All trademarks and materials belong to **RBC Royal Bank**.
 
 ---
+
 
 
 
