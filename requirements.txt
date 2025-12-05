@@ -12,13 +12,13 @@ requests
 # Embeddings + Retrieval
 faiss-cpu
 torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
-transformers==4.37.2
-sentence-transformers==2.2.2
 
-# Critical compatibility fix
+# Version-locked and compatible trio
+sentence-transformers==2.2.2
+transformers==4.30.0
 huggingface-hub==0.16.4
 
-# ONNX Runtime (Cloud Run)
+# ONNX Runtime for Cloud Run
 onnxruntime
 
 # Cloud + Utils
