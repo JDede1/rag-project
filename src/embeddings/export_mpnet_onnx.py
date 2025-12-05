@@ -1,18 +1,13 @@
 """
 MPNet → ONNX Export Script
----------------------------------------------
 Exports:
-    • mpnet.onnx
-    • tokenizer.json
-    • special_tokens_map.json
-    • tokenizer_config.json
-    • config.json
-
-Compatible with:
-    Hybrid search_engine.py (local MPNet + cloud ONNX)
+    mpnet.onnx
+    tokenizer.json
+    tokenizer_config.json
+    special_tokens_map.json
+    config.json
 """
 
-import os
 from pathlib import Path
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -26,14 +21,11 @@ INDEX_DIR = PROJECT_ROOT / "data" / "index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 onnx_model_path = INDEX_DIR / "mpnet.onnx"
-
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 print(f"Loading HF MPNet model: {MODEL_NAME}")
 
-# ------------------------------------------------------------
-# Load HF model & tokenizer (NOT SentenceTransformer)
-# ------------------------------------------------------------
+# Use HF AutoModel, not SentenceTransformer
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
 model.eval()
@@ -42,39 +34,34 @@ model.eval()
 print("Saving tokenizer files...")
 tokenizer.save_pretrained(INDEX_DIR)
 
-# ------------------------------------------------------------
-# Create dummy input for tracing
-# ------------------------------------------------------------
+# Dummy input for tracing
 dummy = tokenizer(
-    ["This is a dummy input for ONNX export"],
+    ["Dummy input for ONNX export"],
     return_tensors="pt",
     padding=True,
     truncation=True,
     max_length=256,
 )
 
-# ------------------------------------------------------------
-# Export ONNX model
-# ------------------------------------------------------------
-print("Exporting ONNX model to:", onnx_model_path)
+# Export model
+print(f"Exporting ONNX model to: {onnx_model_path}")
 
 torch.onnx.export(
     model,
     (dummy["input_ids"], dummy["attention_mask"]),
     onnx_model_path.as_posix(),
     input_names=["input_ids", "attention_mask"],
-    output_names=["last_hidden_state", "pooler_output"],
+    output_names=["last_hidden_state"],
     dynamic_axes={
         "input_ids": {0: "batch", 1: "sequence"},
         "attention_mask": {0: "batch", 1: "sequence"},
         "last_hidden_state": {0: "batch", 1: "sequence"},
-        "pooler_output": {0: "batch"},
     },
-    opset_version=14,
+    opset_version=18,   # Use modern opset
 )
 
 print("\nONNX Export Complete:")
-print("  -", onnx_model_path)
+print(f"  - {onnx_model_path}")
 print("  - tokenizer.json")
 print("  - tokenizer_config.json")
 print("  - special_tokens_map.json")
