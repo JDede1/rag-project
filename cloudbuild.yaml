@@ -1,15 +1,18 @@
 # ============================================================
 # Cloud Build for RAG Backend (Docker → Artifact Registry)
+# With forced no-cache rebuild
 # ============================================================
 
 steps:
   # ----------------------------------------------------------
-  # 1) Build Docker image
+  # 1) Build Docker image with NO CACHE
   # ----------------------------------------------------------
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
         "build",
+        "--no-cache",
+        "--pull",
         "-t", "$_AR_IMAGE",
         "."
       ]
@@ -24,8 +27,5 @@ steps:
         "$_AR_IMAGE"
       ]
 
-# ------------------------------------------------------------
-# 3) Register image as build output
-# ------------------------------------------------------------
 images:
   - "$_AR_IMAGE"
