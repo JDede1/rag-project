@@ -25,11 +25,8 @@ import faiss
 import numpy as np
 import pandas as pd
 
-# Local MPNet (optional on cloud)
+# Local MPNet encoder (only used when DEPLOY_ENV != cloud)
 from sentence_transformers import SentenceTransformer
-
-# ONNX encoder (for Cloud Run)
-import onnxruntime as ort
 
 
 # ---------------------------------------------------------
@@ -142,10 +139,17 @@ class RbcRetriever:
     # =========================================================
     def _load_onnx_encoder(self):
         """
-        Expects:
-            data/index/mpnet.onnx
-            data/index/tokenizer.json
+        Loads ONNX MPNet + tokenizer only in cloud environment.
+        Avoids importing onnxruntime in local mode.
         """
+        try:
+            import onnxruntime as ort
+        except Exception:
+            raise RuntimeError(
+                "ONNXRuntime is required in cloud mode but is missing.\n"
+                "Add to requirements.txt: onnxruntime"
+            )
+
         base_dir = Path(__file__).resolve().parents[2]
         onnx_dir = base_dir / "data" / "index"
 
@@ -165,7 +169,7 @@ class RbcRetriever:
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
 
-        # Validate output dimension
+        # Validate ONNX embedding dim
         dummy = self._encode_onnx_embeddings("test")
         if dummy.shape[1] != self.faiss_dim:
             raise ValueError(
@@ -194,7 +198,7 @@ class RbcRetriever:
         return emb
 
     # =========================================================
-    # Hybrid interface — identical return output
+    # Hybrid embedding entrypoint
     # =========================================================
     def embed_query(self, text: str) -> np.ndarray:
         if not text or not isinstance(text, str):
@@ -202,12 +206,13 @@ class RbcRetriever:
 
         if self.encoder_type == "mpnet_onnx":
             return self._encode_onnx_embeddings(text)
-        else:
-            emb = self.model.encode(
-                [text], convert_to_numpy=True, show_progress_bar=False
-            ).astype(np.float32)
-            faiss.normalize_L2(emb)
-            return emb
+
+        emb = self.model.encode(
+            [text], convert_to_numpy=True, show_progress_bar=False
+        ).astype(np.float32)
+
+        faiss.normalize_L2(emb)
+        return emb
 
     # ---------------------------------------------------------
     # Reranking
@@ -254,7 +259,7 @@ class RbcRetriever:
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
-        RECALL_K = 30
+        RECALL_K = 30  # high recall
 
         query_emb = self.embed_query(query)
         distances, indices = self.index.search(query_emb, RECALL_K)
@@ -278,7 +283,7 @@ class RbcRetriever:
         reranked = self._rerank(query, raw)
         clipped = reranked[:top_k]
 
-        # Confidence = avg of top2 final scores
+        # Confidence heuristic = avg of top-2 final scores
         if len(clipped) >= 2:
             avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
@@ -291,7 +296,7 @@ class RbcRetriever:
         return clipped
 
     # ---------------------------------------------------------
-    # Pretty Print Debug Utility
+    # Debug Pretty Print
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
