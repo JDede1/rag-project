@@ -18,12 +18,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ============================================================
 # Install Python Dependencies
+# (Pinned versions to avoid Cloud Run crashes)
 # ============================================================
 COPY requirements.txt .
+
+# --- Install CPU-only torch FIRST (pinned) ---
+RUN pip install --no-cache-dir \
+    torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+
+# --- Install the remaining packages ---
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
-# Copy Application
+# Copy Application Code
 # ============================================================
 COPY . .
 
