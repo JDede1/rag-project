@@ -5,24 +5,21 @@ Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
 Modes:
 
     • Local (default)
-        - SentenceTransformer MPNet (full accuracy)
-        - Requires HF + Torch installed locally.
+        - SentenceTransformer MPNet encoder
+        - Requires HF + Torch installed locally
 
     • Cloud Run (production)
-        - ONNX Runtime MPNet only
-        - Zero HuggingFace downloads at runtime
-        - Fast + lightweight inference
+        - ONNX Runtime MPNet encoder (no HuggingFace downloads)
+        - Uses tokenizer + ONNX files stored locally in /data/index
 
-Selection rule:
+Mode selection:
 
-    - Cloud mode activates only if:
-        DEPLOY_ENV=cloud
+    - Cloud mode activates only when:
+            DEPLOY_ENV=cloud
 
-    - Otherwise:
-        Local mode (SentenceTransformer) is used.
+    - Otherwise local mode is used.
 
-Note: GEN_MODE controls the generator (Phi / Groq) and is intentionally
-      ignored here to avoid breaking local Colab evaluation.
+GEN_MODE (groq/local) is ignored here because generator != retriever.
 """
 
 import os
@@ -33,25 +30,25 @@ import faiss
 import numpy as np
 import pandas as pd
 
+
 # ---------------------------------------------------------
-# Environment mode selection
+# CLOUD / LOCAL mode detection
 # ---------------------------------------------------------
-# Cloud Run: set DEPLOY_ENV=cloud
 IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
 
-# Safe conditional import for SentenceTransformer
 if not IS_CLOUD:
+    # Local mode: HF allowed
     try:
         from sentence_transformers import SentenceTransformer
     except Exception:
         SentenceTransformer = None
 else:
-    # In cloud mode we never use SentenceTransformer
+    # Cloud mode: HF model import blocked
     SentenceTransformer = None
 
 
 # ---------------------------------------------------------
-# Utility Tokenizer
+# Tokenizer helper
 # ---------------------------------------------------------
 def _tokenize(text: str):
     if not text:
@@ -60,23 +57,19 @@ def _tokenize(text: str):
 
 
 # ---------------------------------------------------------
-# Topic classifiers
+# Topic classification
 # ---------------------------------------------------------
 def classify_chunk_topic(text: str) -> str:
     t = text.lower()
 
     if any(k in t for k in ["lost", "stolen", "misplaced", "block your card"]):
         return "lostcard"
-
     if any(k in t for k in ["fraud", "unauthorized", "dispute"]):
         return "fraud"
-
     if any(k in t for k in ["password", "login", "reset", "passcode"]):
         return "login"
-
     if any(k in t for k in ["interac", "e-transfer", "etransfer", "transfer"]):
         return "etransfer"
-
     return "general"
 
 
@@ -85,16 +78,12 @@ def classify_query_topic(q: str) -> str:
 
     if any(k in q for k in ["lost", "stolen", "misplaced"]):
         return "lostcard"
-
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
         return "fraud"
-
     if any(k in q for k in ["password", "login", "reset"]):
         return "login"
-
     if any(k in q for k in ["interac", "e-transfer", "etransfer", "transfer"]):
         return "etransfer"
-
     return "general"
 
 
@@ -102,13 +91,10 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 
 
 # =========================================================
-# Hybrid Retriever (Local MPNet + Cloud ONNX)
+# Hybrid Retriever
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        # -----------------------------------------------------
-        # Load FAISS + metadata
-        # -----------------------------------------------------
         base_dir = Path(__file__).resolve().parents[2]
         index_dir = base_dir / "data" / "index"
 
@@ -124,32 +110,29 @@ class RbcRetriever:
         self.metadata = pd.read_parquet(self.meta_path)
 
         self.faiss_dim = self.index.d
-        print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors)")
+        print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors, dim={self.faiss_dim})")
 
-        # -----------------------------------------------------
-        # Determine encoder mode
-        # -----------------------------------------------------
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX Runtime MPNet encoder")
+            print("[Retriever] Cloud mode → ONNX encoder")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] Local mode → SentenceTransformer MPNet encoder")
+            print("[Retriever] Local mode → SentenceTransformer MPNet")
             self._load_local_encoder()
 
     # =========================================================
-    # LOCAL MODE — SentenceTransformer MPNet
+    # LOCAL MPNet encoder
     # =========================================================
     def _load_local_encoder(self):
         if SentenceTransformer is None:
             raise RuntimeError(
-                "SentenceTransformer is not available.\n"
-                "Install locally: sentence-transformers, transformers, torch"
+                "SentenceTransformer unavailable.\n"
+                "Install: pip install sentence-transformers torch transformers"
             )
 
         model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Confirm vector dimension matches FAISS
+        # Validate dimension
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
@@ -157,18 +140,16 @@ class RbcRetriever:
             )
 
         self.encoder_type = "mpnet_local"
-        print("[Retriever] Local MPNet encoder loaded successfully.")
+        print("[Retriever] Local MPNet loaded.")
 
     # =========================================================
-    # CLOUD MODE — ONNX Runtime encoder
+    # CLOUD ONNX encoder
     # =========================================================
     def _load_onnx_encoder(self):
         try:
             import onnxruntime as ort
         except Exception:
-            raise RuntimeError(
-                "ONNXRuntime missing. Add 'onnxruntime' to requirements.txt"
-            )
+            raise RuntimeError("ONNXRuntime missing. Add 'onnxruntime' to requirements.txt")
 
         base_dir = Path(__file__).resolve().parents[2]
         onnx_dir = base_dir / "data" / "index"
@@ -181,66 +162,72 @@ class RbcRetriever:
         if not self.tokenizer_path.exists():
             raise FileNotFoundError(f"tokenizer.json missing: {self.tokenizer_path}")
 
-        # Create ONNX session
-        self.ort_session = ort.InferenceSession(
-            str(self.onnx_path),
-            providers=["CPUExecutionProvider"],
-        )
-
-        # Tokenizer loads from local folder only — no HF downloads at runtime
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             str(onnx_dir),
-            local_files_only=True,
+            local_files_only=True
         )
 
-        # Validate ONNX dimension
+        self.ort_session = ort.InferenceSession(
+            str(self.onnx_path),
+            providers=["CPUExecutionProvider"]
+        )
+
+        # Validate dimension using mean-pooled ONNX output
         dummy = self._encode_onnx_embeddings("test")
-        if dummy.shape[1] != self.faiss_dim:
+        if dummy.ndim != 2 or dummy.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"ONNX dim {dummy.shape[1]} != FAISS dim {self.faiss_dim}"
+                f"ONNX output dim {dummy.shape} != expected (*, {self.faiss_dim})"
             )
 
         self.encoder_type = "mpnet_onnx"
-        print("[Retriever] ONNX MPNet encoder ready.")
+        print("[Retriever] ONNX MPNet loaded.")
 
     # =========================================================
-    # ONNX embedding encoder
+    # ONNX embedding with mean pooling
     # =========================================================
     def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
         tokens = self.tokenizer(
             text,
             return_tensors="np",
             padding=True,
-            truncation=True,
+            truncation=True
         )
 
         ort_inputs = {k: v for k, v in tokens.items()}
         ort_out = self.ort_session.run(None, ort_inputs)[0]
 
-        emb = ort_out.astype(np.float32)
+        # ONNX output shape: (batch, seq_len, hidden)
+        emb = ort_out
+
+        # Mean-pool across token axis → (batch, hidden)
+        if emb.ndim == 3:
+            emb = emb.mean(axis=1)
+
+        # Ensure batch dimension
+        if emb.ndim == 1:
+            emb = np.expand_dims(emb, 0)
+
+        emb = emb.astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
 
     # =========================================================
-    # Main embedding entrypoint
+    # Main embedding function
     # =========================================================
     def embed_query(self, text: str) -> np.ndarray:
-        if not text or not isinstance(text, str):
+        if not text:
             raise ValueError("Query must be a non-empty string.")
 
         if self.encoder_type == "mpnet_onnx":
             return self._encode_onnx_embeddings(text)
 
-        emb = (
-            self.model.encode(
-                [text],
-                convert_to_numpy=True,
-                show_progress_bar=False,
-            )
-            .astype(np.float32)
-        )
+        emb = self.model.encode(
+            [text],
+            convert_to_numpy=True,
+            show_progress_bar=False
+        ).astype(np.float32)
 
         faiss.normalize_L2(emb)
         return emb
@@ -251,7 +238,7 @@ class RbcRetriever:
     def _rerank(self, query: str, results: list):
         q_tokens = set(_tokenize(query))
         q_topic = classify_query_topic(query)
-        question_overlap = q_tokens & QUESTION_WORDS
+        has_question_word = bool(q_tokens & QUESTION_WORDS)
 
         reranked = []
 
@@ -262,21 +249,21 @@ class RbcRetriever:
             chunk_tokens = set(_tokenize(chunk))
             lexical_overlap = len(q_tokens & chunk_tokens)
 
-            base_score = r["score"]
+            base = r["score"]
 
             lexical_boost = 0.12 * lexical_overlap
-            qword_boost = 0.05 * (1 if question_overlap else 0)
+            question_boost = 0.05 if has_question_word else 0.0
 
             if q_topic == chunk_topic:
                 topic_boost = 0.30
             elif q_topic != "general" and chunk_topic != "general":
                 topic_boost = -0.10
             else:
-                topic_boost = 0.0
+                topic_boost = 0
 
-            final_score = float(base_score + lexical_boost + qword_boost + topic_boost)
+            final = float(base + lexical_boost + question_boost + topic_boost)
 
-            r["final_score"] = final_score
+            r["final_score"] = final
             r["citation_id"] = i + 1
             r["topic"] = chunk_topic
 
@@ -292,8 +279,9 @@ class RbcRetriever:
             raise ValueError("Query cannot be empty.")
 
         RECALL_K = 30
-        query_emb = self.embed_query(query)
-        distances, indices = self.index.search(query_emb, RECALL_K)
+        q_emb = self.embed_query(query)
+
+        distances, indices = self.index.search(q_emb, RECALL_K)
 
         raw = []
         for score, idx in zip(distances[0], indices[0]):
@@ -319,26 +307,23 @@ class RbcRetriever:
         else:
             avg = clipped[0]["final_score"] if clipped else 0.0
 
-        avg = float(avg)
         for r in clipped:
-            r["confidence"] = avg
+            r["confidence"] = float(avg)
 
         return clipped
 
     # ---------------------------------------------------------
-    # Pretty print (local debug)
+    # Debug printer
     # ---------------------------------------------------------
     def pretty_print(self, query: str, top_k: int = 5):
         results = self.search(query, top_k)
         print(f"\nQuery: {query}\n")
-        for i, r in enumerate(results, start=1):
-            print(f"{i}. ({r['final_score']:.4f}) [topic={r['topic']}] {r['question']}")
-            print(f"   Chunk: {r['chunk'][:160]}...")
-            if r.get("url"):
-                print(f"   URL: {r['url']}")
+        for i, r in enumerate(results, 1):
+            print(f"{i}. ({r['final_score']:.4f}) [{r['topic']}] {r['question']}")
+            print(f"   Chunk: {r['chunk'][:150]}...")
             print(f"   CIT: {r['citation_id']}\n")
 
 
 if __name__ == "__main__":
     retriever = RbcRetriever()
-    retriever.pretty_print("How do I report a lost credit card?", top_k=5)
+    retriever.pretty_print("How do I report a lost credit card?")
