@@ -1,20 +1,28 @@
 """
 Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
 ---------------------------------------------------------------------------
+
 Modes:
+
     • Local (default)
         - SentenceTransformer MPNet (full accuracy)
         - Requires HF + Torch installed locally.
 
     • Cloud Run (production)
         - ONNX Runtime MPNet only
-        - Zero HuggingFace downloads
+        - Zero HuggingFace downloads at runtime
         - Fast + lightweight inference
 
-Cloud selection logic:
-    Cloud mode activates if either:
-        GEN_MODE=groq       (your Cloud Run setting)
+Selection rule:
+
+    - Cloud mode activates only if:
         DEPLOY_ENV=cloud
+
+    - Otherwise:
+        Local mode (SentenceTransformer) is used.
+
+Note: GEN_MODE controls the generator (Phi / Groq) and is intentionally
+      ignored here to avoid breaking local Colab evaluation.
 """
 
 import os
@@ -25,23 +33,20 @@ import faiss
 import numpy as np
 import pandas as pd
 
-
 # ---------------------------------------------------------
+# Environment mode selection
+# ---------------------------------------------------------
+# Cloud Run: set DEPLOY_ENV=cloud
+IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
+
 # Safe conditional import for SentenceTransformer
-# ---------------------------------------------------------
-IS_CLOUD = (
-    os.getenv("DEPLOY_ENV", "").lower() == "cloud"
-    or os.getenv("GEN_MODE", "").lower() == "groq"
-)
-
 if not IS_CLOUD:
-    # LOCAL ENVIRONMENT → OK to import HF + Torch
     try:
         from sentence_transformers import SentenceTransformer
     except Exception:
         SentenceTransformer = None
 else:
-    # CLOUD RUN → BLOCK imports completely
+    # In cloud mode we never use SentenceTransformer
     SentenceTransformer = None
 
 
@@ -122,13 +127,13 @@ class RbcRetriever:
         print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors)")
 
         # -----------------------------------------------------
-        # Determine mode
+        # Determine encoder mode
         # -----------------------------------------------------
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX Runtime encoder")
+            print("[Retriever] Cloud mode → ONNX Runtime MPNet encoder")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] Local mode → SentenceTransformer MPNet")
+            print("[Retriever] Local mode → SentenceTransformer MPNet encoder")
             self._load_local_encoder()
 
     # =========================================================
@@ -152,7 +157,7 @@ class RbcRetriever:
             )
 
         self.encoder_type = "mpnet_local"
-        print(f"[Retriever] Local MPNet loaded successfully.")
+        print("[Retriever] Local MPNet encoder loaded successfully.")
 
     # =========================================================
     # CLOUD MODE — ONNX Runtime encoder
@@ -174,17 +179,21 @@ class RbcRetriever:
 
         self.tokenizer_path = onnx_dir / "tokenizer.json"
         if not self.tokenizer_path.exists():
-            raise FileNotFoundError(f"Tokenizer.json missing: {self.tokenizer_path}")
+            raise FileNotFoundError(f"tokenizer.json missing: {self.tokenizer_path}")
 
         # Create ONNX session
         self.ort_session = ort.InferenceSession(
             str(self.onnx_path),
-            providers=["CPUExecutionProvider"]
+            providers=["CPUExecutionProvider"],
         )
 
-        # Tokenizer loads from local folder only — NO HF downloading
+        # Tokenizer loads from local folder only — no HF downloads at runtime
         from transformers import AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir), local_files_only=True)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            str(onnx_dir),
+            local_files_only=True,
+        )
 
         # Validate ONNX dimension
         dummy = self._encode_onnx_embeddings("test")
@@ -194,7 +203,7 @@ class RbcRetriever:
             )
 
         self.encoder_type = "mpnet_onnx"
-        print(f"[Retriever] ONNX MPNet encoder ready.")
+        print("[Retriever] ONNX MPNet encoder ready.")
 
     # =========================================================
     # ONNX embedding encoder
@@ -204,7 +213,7 @@ class RbcRetriever:
             text,
             return_tensors="np",
             padding=True,
-            truncation=True
+            truncation=True,
         )
 
         ort_inputs = {k: v for k, v in tokens.items()}
@@ -224,9 +233,14 @@ class RbcRetriever:
         if self.encoder_type == "mpnet_onnx":
             return self._encode_onnx_embeddings(text)
 
-        emb = self.model.encode(
-            [text], convert_to_numpy=True, show_progress_bar=False
-        ).astype(np.float32)
+        emb = (
+            self.model.encode(
+                [text],
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+            .astype(np.float32)
+        )
 
         faiss.normalize_L2(emb)
         return emb
@@ -253,11 +267,12 @@ class RbcRetriever:
             lexical_boost = 0.12 * lexical_overlap
             qword_boost = 0.05 * (1 if question_overlap else 0)
 
-            topic_boost = (
-                0.30 if q_topic == chunk_topic
-                else -0.10 if (q_topic != "general" and chunk_topic != "general")
-                else 0.0
-            )
+            if q_topic == chunk_topic:
+                topic_boost = 0.30
+            elif q_topic != "general" and chunk_topic != "general":
+                topic_boost = -0.10
+            else:
+                topic_boost = 0.0
 
             final_score = float(base_score + lexical_boost + qword_boost + topic_boost)
 
@@ -299,7 +314,6 @@ class RbcRetriever:
         reranked = self._rerank(query, raw)
         clipped = reranked[:top_k]
 
-        # Confidence = avg top-2 final scores
         if len(clipped) >= 2:
             avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
@@ -325,7 +339,6 @@ class RbcRetriever:
             print(f"   CIT: {r['citation_id']}\n")
 
 
-# Standalone local test
 if __name__ == "__main__":
     retriever = RbcRetriever()
-    retriever.pretty_print("How do I report a lost credit card?")
+    retriever.pretty_print("How do I report a lost credit card?", top_k=5)
