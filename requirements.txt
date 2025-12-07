@@ -1,45 +1,40 @@
-# ------------------------------
+# ============================================================
 # Core Python Utilities
-# ------------------------------
+# ============================================================
 pandas==2.3.2
 numpy==1.26.4
 pyarrow
 fastparquet
 
-# ------------------------------
+# ============================================================
 # API + Server
-# ------------------------------
-fastapi==0.110.0
-uvicorn[standard]==0.29.0
+# ============================================================
+fastapi
+uvicorn[standard]
 requests
+python-dotenv
 
-# ------------------------------
-# FAISS + Torch (CPU)
-# ------------------------------
-faiss-cpu==1.7.4
-torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+# ============================================================
+# FAISS + Vector Search
+# ============================================================
+faiss-cpu
 
-# ------------------------------
-# Embedding Stack (LOCAL-ONLY)
-# sentence-transformers downloads *locally* ONLY.
-# Cloud Run never triggers model downloads.
-# ------------------------------
+# ============================================================
+# ONNX Runtime (Cloud Run Encoder)
+# ============================================================
+onnxruntime==1.17.0
+
+# ============================================================
+# Sentence Transformer (LOCAL ONLY)
+# Safe version for MPNet
+# Compatible with torch==2.1.2 and HF pinned versions
+# ============================================================
 sentence-transformers==2.2.2
-transformers==4.30.0
+transformers==4.30.2
 huggingface-hub==0.16.4
 
-# ------------------------------
-# ONNX Runtime for CLOUD MODE
-# ------------------------------
-onnxruntime==1.17.1
-
-# ------------------------------
-# Environment & Utilities
-# ------------------------------
-python-dotenv==1.0.1
-
-# ------------------------------
-# Monitoring + Dashboard
-# ------------------------------
-streamlit==1.37.0
-plotly==5.22.0
+# ============================================================
+# Streamlit Dashboard (Phase 7)
+# ============================================================
+streamlit
+plotly
