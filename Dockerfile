@@ -1,5 +1,5 @@
 # ============================================================
-# Base Image
+# Base Image (Slim, Cloud Run Friendly)
 # ============================================================
 FROM python:3.11-slim
 
@@ -18,15 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ============================================================
 # Install Python Dependencies
-# (Pinned versions to avoid Cloud Run crashes)
 # ============================================================
+
 COPY requirements.txt .
 
-# --- Install CPU-only torch FIRST (pinned) ---
+# 1. Install CPU-ONLY Torch FIRST (binary wheel)
 RUN pip install --no-cache-dir \
     torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
 
-# --- Install the remaining packages ---
+# 2. Install all remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
@@ -38,6 +38,13 @@ COPY . .
 # Prepare Logs Directory
 # ============================================================
 RUN mkdir -p /app/logs
+
+# ============================================================
+# Cloud Run Environment Variables (ONNX mode)
+# ============================================================
+ENV DEPLOY_ENV=cloud
+ENV GEN_MODE=groq
+ENV ENFORCE_GROUNDING=true
 
 # ============================================================
 # Expose FastAPI Port
