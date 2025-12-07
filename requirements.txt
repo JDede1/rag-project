@@ -1,29 +1,45 @@
+# ------------------------------
 # Core Python Utilities
+# ------------------------------
 pandas==2.3.2
 numpy==1.26.4
 pyarrow
 fastparquet
 
+# ------------------------------
 # API + Server
-fastapi
-uvicorn[standard]
+# ------------------------------
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
 requests
 
-# Embeddings + Retrieval
-faiss-cpu
+# ------------------------------
+# FAISS + Torch (CPU)
+# ------------------------------
+faiss-cpu==1.7.4
 torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
 
-# Version-locked and compatible trio
+# ------------------------------
+# Embedding Stack (LOCAL-ONLY)
+# sentence-transformers downloads *locally* ONLY.
+# Cloud Run never triggers model downloads.
+# ------------------------------
 sentence-transformers==2.2.2
 transformers==4.30.0
 huggingface-hub==0.16.4
 
-# ONNX Runtime for Cloud Run
-onnxruntime
+# ------------------------------
+# ONNX Runtime for CLOUD MODE
+# ------------------------------
+onnxruntime==1.17.1
 
-# Cloud + Utils
-python-dotenv
+# ------------------------------
+# Environment & Utilities
+# ------------------------------
+python-dotenv==1.0.1
 
-# Monitoring Dashboard
-streamlit
-plotly
+# ------------------------------
+# Monitoring + Dashboard
+# ------------------------------
+streamlit==1.37.0
+plotly==5.22.0
