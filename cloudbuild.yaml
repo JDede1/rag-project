@@ -1,33 +1,30 @@
-# ================================================
-# Cloud Build — RAG Backend (No Cache Build)
-# ================================================
+# ============================================================
+# Cloud Build — Build + Push RAG Backend Image
+# ============================================================
 
-# Disable Cloud Build Docker cache indirectly by enabling BuildKit
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: "E2_HIGHCPU_8"
   env:
     - DOCKER_BUILDKIT=1
 
-# ================================================
-# Build + Push Steps
-# ================================================
 steps:
-  # ------------------------------------------------
-  # 1. Build Docker image (no cache)
-  # ------------------------------------------------
+
+  # ----------------------------------------------------------
+  # 1. Build Docker Image (NO CACHE)
+  # ----------------------------------------------------------
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
         "build",
-        "-t", "$_AR_IMAGE",
         "--no-cache",
+        "-t", "$_AR_IMAGE",
         "."
       ]
 
-  # ------------------------------------------------
-  # 2. Push image to Artifact Registry
-  # ------------------------------------------------
+  # ----------------------------------------------------------
+  # 2. Push to Artifact Registry
+  # ----------------------------------------------------------
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -35,8 +32,8 @@ steps:
         "$_AR_IMAGE"
       ]
 
-# ================================================
-# Output image for downstream deployment steps
-# ================================================
+# ------------------------------------------------------------
+# Output image for downstream processes
+# ------------------------------------------------------------
 images:
   - "$_AR_IMAGE"
