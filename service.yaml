@@ -1,0 +1,46 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: rag-backend
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "4"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+
+    spec:
+      containerConcurrency: 10
+      timeoutSeconds: 900
+
+      containers:
+        - image: us-central1-docker.pkg.dev/rag-prod-479222/rag-repo/rag-backend:latest
+          ports:
+            - containerPort: 8000
+
+          env:
+            - name: DEPLOY_ENV
+              value: "cloud"
+            - name: GEN_MODE
+              value: "groq"
+            - name: ENFORCE_GROUNDING
+              value: "true"
+
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GROQ_API_KEY
+                  key: latest
+
+          resources:
+            limits:
+              cpu: "2"
+              memory: "2048Mi"
+            requests:
+              cpu: "1"
+              memory: "1024Mi"
+
+      ingress: all
