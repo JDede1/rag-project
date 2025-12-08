@@ -1,46 +1,20 @@
-# ==========================================
-# PRODUCTION .dockerignore (CLOUD RUN SAFE)
-# ==========================================
-
 # Python cache
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Virtual environments
-venv/
-env/
-.env/
-*.egg-info/
-
-# Editors / OS files
-.vscode/
-.idea/
-.DS_Store
-
-# Logs
-logs/
-*.log
 
 # Notebooks
 *.ipynb
 .ipynb_checkpoints/
 
-# ============================================================
-# Ignore ENTIRE data directory
-# ============================================================
-data/**
+# Logs
+logs/
+*.log
 
-# ============================================================
-# BUT explicitly include the ONNX + FAISS index folder
-# ============================================================
+# Virtual envs
+.env/
+venv/
+
+# Ignore everything in data except index
+data/**
 !data/index/
 !data/index/**
-
-# Build artifacts
-build/
-dist/
-
-# Misc
-cloudflared-linux-amd64.deb
