@@ -2,59 +2,41 @@
 # PRODUCTION .dockerignore
 # ============================================================
 
-# ----------------------
-# Python cache
-# ----------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# ----------------------
-# Virtual environments
-# ----------------------
 venv/
 env/
 .env/
 *.egg-info/
 
-# ----------------------
-# Editors / OS files
-# ----------------------
 .vscode/
 .idea/
 .DS_Store
 
-# ----------------------
-# Logs
-# ----------------------
 logs/
 *.log
 
-# ----------------------
-# Notebooks
-# ----------------------
 *.ipynb
 .ipynb_checkpoints/
 
-# ----------------------
-# Ignore specific subfolders of data, NOT all of data
-# ----------------------
+# First: bring back the whole data/ directory
+!data/
+
+# Then exclude specific subfolders
 data/raw/
 data/processed/
 data/reports/
+data/eval/
 
-# ----------------------
-# DO NOT ignore data/index (needed in container)
-# ----------------------
+# KEEP ONLY data/index
+!data/index/
+!data/index/*
+!data/index/**/*
 
-# ----------------------
-# Build / packaging
-# ----------------------
 build/
 dist/
 
-# ----------------------
-# Misc
-# ----------------------
 cloudflared-linux-amd64.deb
