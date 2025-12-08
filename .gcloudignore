@@ -1,37 +1,38 @@
-# ======================================================================
-# FINAL CLOUD BUILD IGNORE FILE
-# ======================================================================
+# =========================================================================
+# FINAL .gcloudignore (MUST MATCH DOCKERIGNORE FOR CLOUD RUN)
+# =========================================================================
 
-# Cloud Build automatically uses .gcloudignore to determine what files
-# are uploaded to the build context. We MUST ensure that data/index/*
-# is included so that ONNX + FAISS + metadata reach the container.
-# ======================================================================
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-
-# ----------------------------------------------------------------------
-# 1. START FROM Docker’s default behavior
-# ----------------------------------------------------------------------
-# Do NOT include .git or temporary files
+# Git
 .git/
 .gitignore
-.gcloudignore
-Dockerfile~
-**/__pycache__/
-**/*.pyc
 
+# Editors / OS files
+.vscode/
+.idea/
+.DS_Store
 
-# ----------------------------------------------------------------------
-# 2. IGNORE ONLY THE BIG, UNNEEDED FOLDERS
-# ----------------------------------------------------------------------
-data/raw/
-data/processed/
-data/reports/
-data/eval/
+# Logs
+logs/
+*.log
 
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
 
-# ----------------------------------------------------------------------
-# 3. CRITICAL: KEEP data/index (models + index)
-# ----------------------------------------------------------------------
+# ============================================================
+# Ignore ENTIRE data directory
+# ============================================================
+data/**
+
+# ============================================================
+# BUT explicitly include the ONNX + FAISS index folder
+# ============================================================
 !data/index/
 !data/index/**
 !data/index/*.onnx
@@ -42,23 +43,9 @@ data/eval/
 !data/index/*.json
 !data/index/*.txt
 
-
-# ----------------------------------------------------------------------
-# 4. Ignore notebooks & logs
-# ----------------------------------------------------------------------
-*.ipynb
-.ipynb_checkpoints/
-logs/
-*.log
-
-
-# ----------------------------------------------------------------------
-# 5. Build artifacts
-# ----------------------------------------------------------------------
+# Build artifacts
 dist/
 build/
 
-
-# ----------------------------------------------------------------------
-# 6. Keep everything else by default
-# ----------------------------------------------------------------------
+# Misc
+cloudflared-linux-amd64.deb
