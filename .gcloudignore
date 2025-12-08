@@ -1,0 +1,64 @@
+# ======================================================================
+# FINAL CLOUD BUILD IGNORE FILE
+# ======================================================================
+
+# Cloud Build automatically uses .gcloudignore to determine what files
+# are uploaded to the build context. We MUST ensure that data/index/*
+# is included so that ONNX + FAISS + metadata reach the container.
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# 1. START FROM Docker’s default behavior
+# ----------------------------------------------------------------------
+# Do NOT include .git or temporary files
+.git/
+.gitignore
+.gcloudignore
+Dockerfile~
+**/__pycache__/
+**/*.pyc
+
+
+# ----------------------------------------------------------------------
+# 2. IGNORE ONLY THE BIG, UNNEEDED FOLDERS
+# ----------------------------------------------------------------------
+data/raw/
+data/processed/
+data/reports/
+data/eval/
+
+
+# ----------------------------------------------------------------------
+# 3. CRITICAL: KEEP data/index (models + index)
+# ----------------------------------------------------------------------
+!data/index/
+!data/index/**
+!data/index/*.onnx
+!data/index/*.data
+!data/index/*.npy
+!data/index/*.index
+!data/index/*.parquet
+!data/index/*.json
+!data/index/*.txt
+
+
+# ----------------------------------------------------------------------
+# 4. Ignore notebooks & logs
+# ----------------------------------------------------------------------
+*.ipynb
+.ipynb_checkpoints/
+logs/
+*.log
+
+
+# ----------------------------------------------------------------------
+# 5. Build artifacts
+# ----------------------------------------------------------------------
+dist/
+build/
+
+
+# ----------------------------------------------------------------------
+# 6. Keep everything else by default
+# ----------------------------------------------------------------------
