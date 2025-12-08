@@ -1,10 +1,6 @@
 # ============================================================
 # PRODUCTION .dockerignore — RAG Backend
 # ============================================================
-# RULE:
-#   KEEP:   data/index/ (FAISS + metadata required in image)
-#   IGNORE: data/raw/, processed/, reports/ + dev files
-# ============================================================
 
 # ----------------------
 # Python cache
@@ -30,34 +26,35 @@ env/
 .DS_Store
 
 # ----------------------
-# Logs (Cloud Run creates its own)
+# Logs
 # ----------------------
 logs/
 *.log
 
 # ----------------------
-# Notebooks (local-only development)
+# Notebooks
 # ----------------------
 *.ipynb
 .ipynb_checkpoints/
 
 # ----------------------
-# Data — ignore everything except FAISS index
+# Ignore ENTIRE data folder
 # ----------------------
-data/raw/
-data/processed/
-data/reports/
-
-# ❗Critical:
-# data/index/ is intentionally NOT ignored — must be included in Docker.
+data/**/*
 
 # ----------------------
-# External tools (not needed in container)
+# EXCEPT: include FAISS + ONNX model + metadata
 # ----------------------
-cloudflared-linux-amd64.deb
+!data/index/
+!data/index/**
 
 # ----------------------
 # Build / packaging
 # ----------------------
 build/
 dist/
+
+# ----------------------
+# Misc
+# ----------------------
+cloudflared-linux-amd64.deb
