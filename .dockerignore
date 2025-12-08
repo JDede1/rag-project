@@ -1,6 +1,6 @@
-# ============================================================
-# PRODUCTION .dockerignore
-# ============================================================
+# ==========================================
+# PRODUCTION .dockerignore (CLOUD RUN SAFE)
+# ==========================================
 
 # Python cache
 __pycache__/
@@ -28,17 +28,15 @@ logs/
 .ipynb_checkpoints/
 
 # ============================================================
-# Ignore all data/*
+# Ignore ENTIRE data directory
 # ============================================================
-data/*
+data/**
 
 # ============================================================
-# BUT KEEP data/index (ONNX + FAISS + metadata)
+# BUT explicitly include the ONNX + FAISS index folder
 # ============================================================
 !data/index/
 !data/index/**
-!data/index/*
-!data/index/**/*
 
 # Build artifacts
 build/
