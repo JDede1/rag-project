@@ -1,42 +1,48 @@
 # ============================================================
-# PRODUCTION .dockerignore
+# PRODUCTION .dockerignore (FINAL — WORKING)
 # ============================================================
 
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
+# Virtual environments
 venv/
 env/
 .env/
 *.egg-info/
 
+# Editors / OS files
 .vscode/
 .idea/
 .DS_Store
 
+# Logs
 logs/
 *.log
 
+# Notebooks
 *.ipynb
 .ipynb_checkpoints/
 
-# First: bring back the whole data/ directory
-!data/
+# ============================================================
+# Ignore all data/*
+# ============================================================
+data/*
 
-# Then exclude specific subfolders
-data/raw/
-data/processed/
-data/reports/
-data/eval/
-
-# KEEP ONLY data/index
+# ============================================================
+# BUT KEEP data/index (ONNX + FAISS + metadata)
+# ============================================================
 !data/index/
+!data/index/**
 !data/index/*
 !data/index/**/*
 
+# Build artifacts
 build/
 dist/
 
+# Misc
 cloudflared-linux-amd64.deb
