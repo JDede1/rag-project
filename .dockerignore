@@ -1,5 +1,5 @@
 # ============================================================
-# PRODUCTION .dockerignore — RAG Backend
+# PRODUCTION .dockerignore
 # ============================================================
 
 # ----------------------
@@ -38,15 +38,15 @@ logs/
 .ipynb_checkpoints/
 
 # ----------------------
-# Ignore ENTIRE data folder
+# Ignore specific subfolders of data, NOT all of data
 # ----------------------
-data/**/*
+data/raw/
+data/processed/
+data/reports/
 
 # ----------------------
-# EXCEPT: include FAISS + ONNX model + metadata
+# DO NOT ignore data/index (needed in container)
 # ----------------------
-!data/index/
-!data/index/**
 
 # ----------------------
 # Build / packaging
