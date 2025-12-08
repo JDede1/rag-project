@@ -35,13 +35,6 @@ data/**
 # ============================================================
 !data/index/
 !data/index/**
-!data/index/*.onnx
-!data/index/*.data
-!data/index/*.npy
-!data/index/*.index
-!data/index/*.parquet
-!data/index/*.json
-!data/index/*.txt
 
 # Build artifacts
 dist/
