@@ -1,44 +1,24 @@
-# =========================================================================
-# FINAL .gcloudignore (MUST MATCH DOCKERIGNORE FOR CLOUD RUN)
-# =========================================================================
+# From .gitignore
+.git/
+.gitignore
 
 # Python cache
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Git
-.git/
-.gitignore
-
-# Editors / OS files
-.vscode/
-.idea/
-.DS_Store
-
-# Logs
-logs/
-*.log
 
 # Notebooks
 *.ipynb
 .ipynb_checkpoints/
 
-# ============================================================
-# Ignore ENTIRE data directory
-# ============================================================
-data/**
+# Logs
+logs/
+*.log
 
-# ============================================================
-# BUT explicitly include the ONNX + FAISS index folder
-# ============================================================
+# Virtual envs
+.env/
+venv/
+
+# Ignore everything in data except index
+data/**
 !data/index/
 !data/index/**
-
-# Build artifacts
-dist/
-build/
-
-# Misc
-cloudflared-linux-amd64.deb
