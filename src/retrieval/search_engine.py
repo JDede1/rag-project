@@ -1,15 +1,15 @@
 """
-Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
+Hybrid Search Engine — MiniLM (Local) and ONNX (Cloud)
 ---------------------------------------------------------------------------
 
 Modes:
 
     • Local (default)
-        - SentenceTransformer MPNet encoder
+        - SentenceTransformer MiniLM encoder
         - Requires HF + Torch installed locally
 
     • Cloud Run (production)
-        - ONNX Runtime MPNet encoder (no HuggingFace downloads)
+        - ONNX Runtime MiniLM encoder (no HuggingFace downloads)
         - Uses tokenizer + ONNX files stored locally in /data/index
 
 Mode selection:
@@ -18,8 +18,6 @@ Mode selection:
             DEPLOY_ENV=cloud
 
     - Otherwise local mode is used.
-
-GEN_MODE (groq/local) is ignored here because generator != retriever.
 """
 
 import os
@@ -43,7 +41,7 @@ if not IS_CLOUD:
     except Exception:
         SentenceTransformer = None
 else:
-    # Cloud mode: HF model import blocked
+    # Cloud mode: HF import disabled
     SentenceTransformer = None
 
 
@@ -95,8 +93,7 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        # *** FIXED FOR CLOUD RUN ***
-        # Always use the Docker WORKDIR (/app)
+        # Use Docker WORKDIR
         base_dir = Path("/app")
         index_dir = base_dir / "data" / "index"
 
@@ -115,14 +112,14 @@ class RbcRetriever:
         print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors, dim={self.faiss_dim})")
 
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX encoder")
+            print("[Retriever] Cloud mode → ONNX MiniLM")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] Local mode → SentenceTransformer MPNet")
+            print("[Retriever] Local mode → SentenceTransformer MiniLM")
             self._load_local_encoder()
 
     # =========================================================
-    # LOCAL MPNet encoder
+    # LOCAL MiniLM encoder
     # =========================================================
     def _load_local_encoder(self):
         if SentenceTransformer is None:
@@ -131,21 +128,20 @@ class RbcRetriever:
                 "Install: pip install sentence-transformers torch transformers"
             )
 
-        model_name = "sentence-transformers/all-mpnet-base-v2"
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Validate dimension
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"Local MPNet dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}"
+                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}"
             )
 
-        self.encoder_type = "mpnet_local"
-        print("[Retriever] Local MPNet loaded.")
+        self.encoder_type = "minilm_local"
+        print("[Retriever] Local MiniLM loaded.")
 
     # =========================================================
-    # CLOUD ONNX encoder
+    # CLOUD ONNX MiniLM encoder
     # =========================================================
     def _load_onnx_encoder(self):
         try:
@@ -153,11 +149,10 @@ class RbcRetriever:
         except Exception:
             raise RuntimeError("ONNXRuntime missing. Add 'onnxruntime' to requirements.txt")
 
-        # *** FIXED FOR CLOUD RUN ***
         base_dir = Path("/app")
         onnx_dir = base_dir / "data" / "index"
 
-        self.onnx_path = onnx_dir / "mpnet.onnx"
+        self.onnx_path = onnx_dir / "minilm.onnx"
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX model missing: {self.onnx_path}")
 
@@ -183,8 +178,8 @@ class RbcRetriever:
                 f"ONNX output dim {dummy.shape} != expected (*, {self.faiss_dim})"
             )
 
-        self.encoder_type = "mpnet_onnx"
-        print("[Retriever] ONNX MPNet loaded.")
+        self.encoder_type = "minilm_onnx"
+        print("[Retriever] ONNX MiniLM loaded.")
 
     # =========================================================
     # ONNX embedding with mean pooling
@@ -219,7 +214,7 @@ class RbcRetriever:
         if not text:
             raise ValueError("Query must be a non-empty string.")
 
-        if self.encoder_type == "mpnet_onnx":
+        if self.encoder_type == "minilm_onnx":
             return self._encode_onnx_embeddings(text)
 
         emb = self.model.encode(
