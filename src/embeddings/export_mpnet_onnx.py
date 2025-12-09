@@ -2,18 +2,22 @@
 MPNet → ONNX Export Script (Cloud-Run Compatible)
 ================================================
 
-This script exports an ONNX model fully compatible with the ONNXRuntime
-available inside Cloud Run. Cloud Run supports up to **IR version 9**,
-so we force an opset that guarantees IR ≤ 9.
+Exports a Cloud Run–safe ONNX version of the MPNet encoder used for
+retrieval. This ONNX model MUST match the exact encoder used to build
+your FAISS index (768-dim MPNet).
 
-Output files saved to data/index/:
+Cloud Run requirement:
+    - ONNX IR version must be ≤ 9
+    - Opset 12 ensures IR ≤ 9
+
+Files saved to data/index/:
     • mpnet.onnx
     • tokenizer.json
     • tokenizer_config.json
     • special_tokens_map.json
     • config.json
 
-Run this AFTER Phase 3 (embeddings + index).
+Run only AFTER Phase 3 completes.
 """
 
 from pathlib import Path
@@ -32,29 +36,27 @@ ONNX_PATH = INDEX_DIR / "mpnet.onnx"
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 print("\n==========================================")
-print("   MPNet → ONNX Export (Cloud Run Safe)")
+print("       MPNet → ONNX Export (Cloud Safe)")
 print("==========================================\n")
 
 # ------------------------------------------------------------
-# 1. Load model + tokenizer
+# 1. Load HF model + tokenizer
 # ------------------------------------------------------------
-print(f"Loading HuggingFace MPNet model: {MODEL_NAME}")
+print(f"Loading MPNet model: {MODEL_NAME}")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
 model.eval()
 
-print("Saving tokenizer files...")
+print("Saving tokenizer + config...")
 tokenizer.save_pretrained(INDEX_DIR)
-
-print("Saving config.json...")
 model.config.to_json_file(INDEX_DIR / "config.json")
 
 # ------------------------------------------------------------
-# 2. Dummy input for tracing
+# 2. Create dummy input for tracing
 # ------------------------------------------------------------
-dummy = tokenizer(
-    ["Dummy input for ONNX export"],
+dummy_inputs = tokenizer(
+    ["Dummy input for ONNX tracing"],
     padding=True,
     truncation=True,
     max_length=256,
@@ -62,13 +64,13 @@ dummy = tokenizer(
 )
 
 # ------------------------------------------------------------
-# 3. Export ONNX (opset 12 ensures IR v9 in Cloud Run)
+# 3. Export ONNX (opset=12 → IR ≤ 9)
 # ------------------------------------------------------------
-print(f"Exporting ONNX model → {ONNX_PATH}")
+print(f"Exporting ONNX → {ONNX_PATH}\n")
 
 torch.onnx.export(
     model,
-    (dummy["input_ids"], dummy["attention_mask"]),
+    (dummy_inputs["input_ids"], dummy_inputs["attention_mask"]),
     ONNX_PATH.as_posix(),
     input_names=["input_ids", "attention_mask"],
     output_names=["last_hidden_state"],
@@ -77,29 +79,31 @@ torch.onnx.export(
         "attention_mask": {0: "batch", 1: "sequence"},
         "last_hidden_state": {0: "batch", 1: "sequence"},
     },
-    opset_version=12,   # Cloud Run safe → IR version 9
+    opset_version=12,     # Ensures Cloud Run compatible IR v9
 )
 
 # ------------------------------------------------------------
-# 4. Validate ONNX IR version
+# 4. Validate IR version
 # ------------------------------------------------------------
-print("Validating generated ONNX IR version...")
+print("Validating ONNX IR version...\n")
 
 model_onnx = onnx.load(ONNX_PATH)
-print("  IR version:", model_onnx.ir_version)
+ir_version = model_onnx.ir_version
 
-if model_onnx.ir_version > 9:
+print(f"Detected IR version: {ir_version}")
+
+if ir_version > 9:
     raise RuntimeError(
-        f"ONNX IR version {model_onnx.ir_version} > 9 — Cloud Run will reject this model."
+        f"ERROR: ONNX IR version {ir_version} exceeds Cloud Run limit (≤ 9)."
     )
 
-print("  ONNX model is Cloud Run–compatible (IR ≤ 9).")
+print("✔️ ONNX model is Cloud Run–compatible (IR ≤ 9)\n")
 
-print("\nONNX Export Complete:")
-print(" - mpnet.onnx")
-print(" - tokenizer.json")
-print(" - tokenizer_config.json")
-print(" - special_tokens_map.json")
-print(" - config.json")
+print("Export complete. Files generated:")
+print("  - mpnet.onnx")
+print("  - tokenizer.json")
+print("  - tokenizer_config.json")
+print("  - special_tokens_map.json")
+print("  - config.json\n")
 
-print("\nExport finished successfully.\n")
+print("MPNet ONNX export finished successfully.\n")
