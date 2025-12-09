@@ -35,7 +35,6 @@ COPY . .
 
 # ============================================================
 # FORCE INCLUDE FAISS + ONNX + EMBEDDINGS
-# (Protection against .dockerignore issues)
 # ============================================================
 RUN mkdir -p /app/data/index
 
@@ -43,9 +42,10 @@ COPY data/index/rbc_faiss.index        /app/data/index/
 COPY data/index/rbc_embeddings.npy     /app/data/index/
 COPY data/index/rbc_metadata.parquet   /app/data/index/
 
-COPY data/index/mpnet.onnx             /app/data/index/
-COPY data/index/mpnet.onnx.data        /app/data/index/
+# ==== IMPORTANT: MiniLM ONNX ONLY (mpnet removed) ====
+COPY data/index/minilm.onnx            /app/data/index/
 
+# Tokenizer files (shared: same format for mpnet/minilm)
 COPY data/index/config.json            /app/data/index/
 COPY data/index/tokenizer.json         /app/data/index/
 COPY data/index/tokenizer_config.json  /app/data/index/
