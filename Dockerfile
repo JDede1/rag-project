@@ -19,14 +19,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ============================================================
 # Install Python Dependencies
 # ============================================================
-
 COPY requirements.txt .
 
-# 1. Install CPU-ONLY Torch FIRST (binary wheel)
+# 1. Install CPU-only PyTorch
 RUN pip install --no-cache-dir \
     torch==2.1.2 --index-url https://download.pytorch.org/whl/cpu
 
-# 2. Install all remaining dependencies
+# 2. Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
@@ -35,10 +34,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # ============================================================
-# FORCE-INCLUDE FAISS INDEX DIRECTORY
-# (Prevents Cloud Run from missing rbc_faiss.index)
+# FORCE INCLUDE FAISS + ONNX + EMBEDDINGS
+# (Protection against .dockerignore issues)
 # ============================================================
-COPY data/index /app/data/index
+RUN mkdir -p /app/data/index
+
+COPY data/index/rbc_faiss.index        /app/data/index/
+COPY data/index/rbc_embeddings.npy     /app/data/index/
+COPY data/index/rbc_metadata.parquet   /app/data/index/
+
+COPY data/index/mpnet.onnx             /app/data/index/
+COPY data/index/mpnet.onnx.data        /app/data/index/
+
+COPY data/index/config.json            /app/data/index/
+COPY data/index/tokenizer.json         /app/data/index/
+COPY data/index/tokenizer_config.json  /app/data/index/
+COPY data/index/special_tokens_map.json /app/data/index/
+COPY data/index/vocab.txt               /app/data/index/
 
 # ============================================================
 # Prepare Logs Directory
@@ -46,7 +58,7 @@ COPY data/index /app/data/index
 RUN mkdir -p /app/logs
 
 # ============================================================
-# Cloud Run Environment Variables (ONNX + Groq Mode)
+# Cloud Run Environment Variables
 # ============================================================
 ENV DEPLOY_ENV=cloud
 ENV GEN_MODE=groq
