@@ -1,21 +1,21 @@
 """
-Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
----------------------------------------------------------------------------
+Hybrid Search Engine — MiniLM (Local) and ONNX (Cloud)
+------------------------------------------------------
 
 Modes:
 
     • Local (default)
-        - SentenceTransformer MPNet encoder
-        - Uses HuggingFace model (768-dim)
+        - SentenceTransformer MiniLM encoder
+        - 384-dimensional embeddings
 
     • Cloud Run (production)
-        - ONNX Runtime MPNet encoder (same 768-dim)
+        - ONNX Runtime MiniLM encoder
         - Loads ONNX + tokenizer from /app/data/index
 
 Mode selection:
 
     DEPLOY_ENV=cloud → Cloud Run ONNX mode
-    Default          → Local HF MPNet mode
+    Default          → Local HF MiniLM mode
 """
 
 import os
@@ -25,6 +25,7 @@ from pathlib import Path
 import faiss
 import numpy as np
 import pandas as pd
+
 
 # ---------------------------------------------------------
 # CLOUD / LOCAL detection
@@ -87,8 +88,6 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 class RbcRetriever:
     def __init__(self):
 
-        # Local = repo root
-        # Cloud = /app
         if IS_CLOUD:
             base_dir = Path("/app")
         else:
@@ -98,6 +97,7 @@ class RbcRetriever:
 
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
+        self.onnx_path = index_dir / "minilm.onnx"
 
         if not self.index_path.exists():
             raise FileNotFoundError(f"Missing FAISS index: {self.index_path}")
@@ -111,36 +111,36 @@ class RbcRetriever:
         print(f"[Retriever] Loaded FAISS index ({self.index.ntotal} vectors, dim={self.faiss_dim})")
 
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX MPNet")
+            print("[Retriever] Cloud mode → ONNX MiniLM")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] Local mode → SentenceTransformer MPNet")
+            print("[Retriever] Local mode → SentenceTransformer MiniLM")
             self._load_local_encoder()
 
     # =========================================================
-    # LOCAL MPNet encoder
+    # LOCAL MiniLM encoder
     # =========================================================
     def _load_local_encoder(self):
 
         if SentenceTransformer is None:
-            raise RuntimeError("SentenceTransformer missing. Install sentence-transformers + torch")
+            raise RuntimeError("SentenceTransformer is not available.")
 
-        model_name = "sentence-transformers/all-mpnet-base-v2"
+        model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Validate embedding dimension
+        # Validate embedding dimension (should be 384)
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"Local MPNet dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}\n"
-                "You MUST keep MPNet encoder since your FAISS index was built with MPNet."
+                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim} "
+                "You must rebuild FAISS using MiniLM embeddings."
             )
 
-        self.encoder_type = "mpnet_local"
-        print("[Retriever] Local MPNet loaded.")
+        self.encoder_type = "minilm_local"
+        print("[Retriever] Local MiniLM loaded.")
 
     # =========================================================
-    # CLOUD: ONNX MPNet encoder
+    # CLOUD: ONNX MiniLM encoder
     # =========================================================
     def _load_onnx_encoder(self):
         try:
@@ -155,7 +155,6 @@ class RbcRetriever:
 
         onnx_dir = base_dir / "data" / "index"
 
-        self.onnx_path = onnx_dir / "mpnet.onnx"
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX model missing: {self.onnx_path}")
 
@@ -171,14 +170,14 @@ class RbcRetriever:
         dummy = self._encode_onnx_embeddings("test")
         if dummy.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"ERROR: ONNX MPNet dim {dummy.shape[1]} != FAISS index dim {self.faiss_dim}"
+                f"ERROR: ONNX MiniLM dim {dummy.shape[1]} != FAISS index dim {self.faiss_dim}"
             )
 
-        self.encoder_type = "mpnet_onnx"
-        print("[Retriever] ONNX MPNet loaded.")
+        self.encoder_type = "minilm_onnx"
+        print("[Retriever] ONNX MiniLM loaded.")
 
     # =========================================================
-    # ONNX inference with mean pooling
+    # ONNX encoding with mean pooling
     # =========================================================
     def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
 
@@ -192,7 +191,6 @@ class RbcRetriever:
 
         ort_out = self.ort_session.run(None, tokens)[0]
 
-        # Mean pool over sequence length
         if ort_out.ndim == 3:
             emb = ort_out.mean(axis=1)
         else:
@@ -209,7 +207,8 @@ class RbcRetriever:
     # EMBEDDING FUNCTION
     # =========================================================
     def embed_query(self, text: str):
-        if self.encoder_type == "mpnet_onnx":
+
+        if self.encoder_type == "minilm_onnx":
             return self._encode_onnx_embeddings(text)
 
         emb = self.model.encode([text], convert_to_numpy=True).astype(np.float32)
