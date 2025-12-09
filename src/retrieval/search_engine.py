@@ -91,14 +91,12 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-
-        # =====================================================
-        # Correct path switching: Cloud Run → /app, Colab → repo root
-        # =====================================================
+        # Use Docker WORKDIR in cloud, repo root in local (Colab)
         if IS_CLOUD:
+            # Cloud Run / Docker
             base_dir = Path("/app")
         else:
-            # search_engine.py → src/retrieval/ → repo root
+            # Local: resolve from this file location
             base_dir = Path(__file__).resolve().parents[2]
 
         index_dir = base_dir / "data" / "index"
@@ -331,3 +329,4 @@ class RbcRetriever:
 if __name__ == "__main__":
     retriever = RbcRetriever()
     retriever.pretty_print("How do I report a lost credit card?")
+
