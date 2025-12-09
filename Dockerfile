@@ -43,17 +43,16 @@ COPY data/index/rbc_faiss.index        /app/data/index/
 COPY data/index/rbc_embeddings.npy     /app/data/index/
 COPY data/index/rbc_metadata.parquet   /app/data/index/
 
-# ==== IMPORTANT: MPNet ONNX (correct model) ====
-COPY data/index/mpnet.onnx             /app/data/index/
+# ============================================================
+# MiniLM ONNX (Cloud Run Encoder)
+# ============================================================
+COPY data/index/minilm.onnx            /app/data/index/
 
-# Tokenizer files
+# Tokenizer files (MiniLM)
 COPY data/index/config.json            /app/data/index/
 COPY data/index/tokenizer.json         /app/data/index/
 COPY data/index/tokenizer_config.json  /app/data/index/
 COPY data/index/special_tokens_map.json /app/data/index/
-
-# vocab.txt exists in MPNet tokenizer
-COPY data/index/vocab.txt               /app/data/index/
 
 # ============================================================
 # Prepare Logs Directory
