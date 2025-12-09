@@ -35,12 +35,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # ============================================================
+# FORCE-INCLUDE FAISS INDEX DIRECTORY
+# (Prevents Cloud Run from missing rbc_faiss.index)
+# ============================================================
+COPY data/index /app/data/index
+
+# ============================================================
 # Prepare Logs Directory
 # ============================================================
 RUN mkdir -p /app/logs
 
 # ============================================================
-# Cloud Run Environment Variables (ONNX mode)
+# Cloud Run Environment Variables (ONNX + Groq Mode)
 # ============================================================
 ENV DEPLOY_ENV=cloud
 ENV GEN_MODE=groq
