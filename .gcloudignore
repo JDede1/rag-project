@@ -1,24 +1,23 @@
-# From .gitignore
-.git/
-.gitignore
+# Ignore everything except data/index
+*
 
-# Python cache
-__pycache__/
-*.pyc
-
-# Notebooks
-*.ipynb
-.ipynb_checkpoints/
-
-# Logs
-logs/
-*.log
-
-# Virtual envs
-.env/
-venv/
-
-# Ignore everything in data except index
-data/**
+# But DO NOT ignore these:
+!data/
 !data/index/
 !data/index/**
+
+# Allow source code
+!src/
+!src/**
+!requirements.txt
+!Dockerfile
+!cloudbuild.yaml
+!gcloud_deploy.sh
+!service.yaml
+!README.md
+
+# Allow static directories
+!monitoring/
+!monitoring/**
+!data
+!data/index
