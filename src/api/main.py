@@ -1,10 +1,10 @@
 """
-main.py — FastAPI Backend for Production RAG 
+main.py — FastAPI Backend for Production RAG
 
 Fully aligned with:
-    • Updated embeddings (chunk-only + hint)
-    • New topic-aware search_engine.py
-    • Strict literal generator 
+    • Updated MiniLM embeddings (chunk-only + category hint)
+    • Topic-aware hybrid retrieval
+    • Strict literal generator
     • Monitoring (rag_logger)
 """
 
@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-# Make sure src/ directory is importable
+# Ensure src/ is importable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Internal modules
@@ -40,7 +40,7 @@ CIT_PATTERN = re.compile(r"CIT:(\d+)", re.IGNORECASE)
 # ---------------------------------------------------------
 app = FastAPI(
     title="Fintech RAG API",
-    description="RBC RAG using FAISS + PyTorch MPNet",
+    description="RBC RAG using FAISS + MiniLM Encoder",
     version="12.1.0",
 )
 
@@ -54,7 +54,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------
-# Static Files & Templates Setup
+# Static Files & Templates
 # ---------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -69,20 +69,19 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # ---------------------------------------------------------
 # Load Retriever (Global)
 # ---------------------------------------------------------
-print("Loading PyTorch MPNet retriever...")
+print("Loading MiniLM retriever...")
 retriever = RbcRetriever()
 print("Retriever loaded.\n")
 
 
 # ---------------------------------------------------------
-# CLEAN RETRIEVAL 
+# CLEAN RETRIEVAL
 # ---------------------------------------------------------
 def clean_retrieval(results: list, score_threshold: float = 0.18, max_items: int = 6):
     if not results:
         return []
 
     ordered = sorted(results, key=lambda r: r.get("final_score", 0.0), reverse=True)
-
     top = ordered[0]
     top_topic = top.get("topic", "general")
 
@@ -157,7 +156,7 @@ def health():
     return {
         "status": "ok",
         "generator_mode": GEN_MODE,
-        "retriever_model": "mpnet-pytorch",
+        "retriever_model": "minilm",
         "index_size": retriever.index.ntotal,
         "embedding_dim": retriever.index.d,
         "record_count": len(retriever.metadata),
@@ -176,10 +175,8 @@ def ask(
     start_time = time.time()
 
     try:
-        # 1. Retrieval
         retrieval_results = retriever.search(query, top_k=top_k)
 
-        # 2. Clean + Focus Context
         clean_chunks = clean_retrieval(retrieval_results)
         clean_chunks = focus_context(query, clean_chunks)
 
@@ -211,22 +208,16 @@ def ask(
                 "latency_ms": latency,
             }
 
-        # 3. Strict Literal Generation
         answer, _ = generate_answer(query, clean_chunks)
 
-        # strict-literal always grounded
         grounding_score = 1.0
         context_overlap = 1.0
 
-        # 4. Citations
         citations = sorted({int(m.group(1)) for m in CIT_PATTERN.finditer(answer)})
-
-        # 5. Retriever confidence
         confidence = retrieval_results[0].get("confidence", 0.0)
 
         latency = (time.time() - start_time) * 1000
 
-        # 6. Log event
         log_rag_event(
             query=query,
             answer=answer,
@@ -239,7 +230,6 @@ def ask(
             latency_ms=latency,
         )
 
-        # 7. Response
         return {
             "query": query,
             "answer": answer,
