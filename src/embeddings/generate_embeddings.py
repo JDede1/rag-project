@@ -1,23 +1,22 @@
 """
 generate_embeddings.py
 -------------------------------------------------------
-Embedding Generator
+Embedding Generator (MiniLM Upgrade)
 
-Fixes the major retrieval issue where:
-    • 'lost card' queries retrieved 'fraud' chunks
-    • 'fraud' queries retrieved 'lost card' chunks
-    • Retrieval relied too heavily on question text
+Purpose:
+    • Generate embeddings using all-MiniLM-L6-v2 (384-dim)
+    • Uses CHUNK-ONLY text + light category hint
+    • Prevents topic collisions ('lost card' ↔ 'fraud')
+    • Produces Cloud-Run–compatible embeddings
+    • Saves:
+          - rbc_embeddings.npy
+          - rbc_metadata.parquet
 
-New strategy:
-    • Embed CHUNK-ONLY text (removes semantic collision)
-    • Add an extremely light category signal (optional, safe)
-    • Preserve all provenance and file paths
-
-Outputs:
-    • rbc_embeddings.npy
-    • rbc_metadata.parquet
+This script is executed LOCALLY or in COLAB (Phase 3),
+NOT inside Cloud Run.
 """
 
+import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -25,23 +24,37 @@ from sentence_transformers import SentenceTransformer
 
 
 # -------------------------------------------------------
-# CONFIGURATION
+# CLOUD / LOCAL PATH RESOLUTION (unified)
 # -------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_PROCESSED = BASE_DIR / "data" / "processed"
-DATA_INDEX = BASE_DIR / "data" / "index"
+IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
 
+if IS_CLOUD:
+    # Cloud Run always mounts repo to /app
+    PROJECT_ROOT = Path("/app")
+else:
+    # Local/Colab: go 2 directories up from this file
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
+DATA_INDEX = PROJECT_ROOT / "data" / "index"
 DATA_INDEX.mkdir(parents=True, exist_ok=True)
 
-MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+
+# -------------------------------------------------------
+# MODEL: MiniLM (Cloud-Run compatible)
+# -------------------------------------------------------
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNKS_PATH = DATA_PROCESSED / "rbc_faq_chunks.parquet"
 
 
 # -------------------------------------------------------
 # LIGHT CATEGORY SIGNAL
 # -------------------------------------------------------
-# This prevents semantic drift without reintroducing collision.
 def classify_hint(question: str) -> str:
+    """
+    Adds a tiny category signal to avoid semantic drift.
+    Safe + proven in Phase 7.
+    """
     q = question.lower()
 
     if any(k in q for k in ["lost", "stolen", "misplaced"]):
@@ -56,36 +69,40 @@ def classify_hint(question: str) -> str:
 
 
 # -------------------------------------------------------
-# MAIN FUNCTION
+# MAIN: Generate Embeddings
 # -------------------------------------------------------
 def generate_embeddings():
-    print(f"Loading chunked FAQ dataset: {CHUNKS_PATH.name}")
+    print("\n===============================================")
+    print("   Generating MiniLM Embeddings (Phase 3)")
+    print("===============================================\n")
+
+    print(f"Loading chunked FAQ dataset: {CHUNKS_PATH}")
     df = pd.read_parquet(CHUNKS_PATH)
-    print(f"Loaded {len(df)} chunk entries")
+    print(f"Loaded {len(df)} chunks")
 
     # ---------------------------------------------------
-    # Build text to embed (CHUNK-ONLY + category hint)
+    # Build embedding text
     # ---------------------------------------------------
-    # Major Phase-7 fix: avoid question+chunk collisions
     df["category_hint"] = df["question"].apply(classify_hint)
 
     df["embedding_text"] = (
-        df["chunk"].str.strip()
-        + df["category_hint"]         # tiny nudge, keeps clusters distinct
+        df["chunk"].str.strip() +
+        df["category_hint"]
     )
 
-    print("Sample embedding_text:", df["embedding_text"].iloc[0][:120], "...")
+    print("\nSample embedding_text:")
+    print(df["embedding_text"].iloc[0][:200], "...\n")
 
     # ---------------------------------------------------
-    # Load embedding model
+    # Load MiniLM model
     # ---------------------------------------------------
-    print(f"Loading embedding model: {MODEL_NAME}")
+    print(f"Loading MiniLM embedding model: {MODEL_NAME}")
     model = SentenceTransformer(MODEL_NAME)
 
     # ---------------------------------------------------
-    # Generate embeddings (GPU-optimized)
+    # Generate embeddings
     # ---------------------------------------------------
-    print("Generating embeddings...")
+    print("Generating embeddings... (this may take a while)\n")
 
     embeddings = model.encode(
         df["embedding_text"].tolist(),
@@ -95,17 +112,17 @@ def generate_embeddings():
         device="cuda" if model.device is not None else None
     )
 
-    print(f"Embeddings shape: {embeddings.shape}")
+    print(f"\nEmbeddings shape (expect 384 dim): {embeddings.shape}\n")
 
     # ---------------------------------------------------
-    # Save embeddings → FAISS will normalize them
+    # Save embeddings
     # ---------------------------------------------------
     emb_path = DATA_INDEX / "rbc_embeddings.npy"
     np.save(emb_path, embeddings)
     print(f"Saved embeddings → {emb_path}")
 
     # ---------------------------------------------------
-    # Save metadata (unchanged)
+    # Save metadata
     # ---------------------------------------------------
     metadata_cols = [
         "question",
@@ -117,14 +134,13 @@ def generate_embeddings():
     ]
 
     metadata_cols = [c for c in metadata_cols if c in df.columns]
-
     metadata = df[metadata_cols].copy()
 
     meta_path = DATA_INDEX / "rbc_metadata.parquet"
     metadata.to_parquet(meta_path, index=False)
 
-    print(f"Saved metadata → {meta_path}")
-    print("Embedding generation complete.")
+    print(f"✓ Saved metadata → {meta_path}")
+    print("\nEmbedding generation complete.\n")
 
 
 # -------------------------------------------------------
