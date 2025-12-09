@@ -1,12 +1,13 @@
 """
 build_faiss_index.py
 -------------------------------------------------------
-Build a FAISS index for RBC FAQ embeddings generated using
-the 'all-mpnet-base-v2' model. This index supports:
+Builds a FAISS index for RBC FAQ embeddings generated using
+the all-MiniLM-L6-v2 model (384-dimensional embeddings).
 
-    • High-accuracy cosine similarity retrieval
+Supports:
+    • Cosine-similarity retrieval
     • Chunk-level metadata (question + chunk)
-    • Full provenance:
+    • Provenance fields:
         - source_faq_index
         - url
         - source
@@ -14,9 +15,10 @@ the 'all-mpnet-base-v2' model. This index supports:
 
 Outputs:
     • rbc_faiss.index
-    • Console test retrieval with explanations
+    • Test retrieval output (MiniLM-based)
 """
 
+import os
 import numpy as np
 import pandas as pd
 import faiss
@@ -25,17 +27,23 @@ from pathlib import Path
 
 
 # -------------------------------------------------------
-# CONFIGURATION
+# CLOUD / LOCAL PATH RESOLUTION
 # -------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_INDEX = BASE_DIR / "data" / "index"
+IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
+
+if IS_CLOUD:
+    PROJECT_ROOT = Path("/app")
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+DATA_INDEX = PROJECT_ROOT / "data" / "index"
 
 EMBEDDINGS_PATH = DATA_INDEX / "rbc_embeddings.npy"
 METADATA_PATH = DATA_INDEX / "rbc_metadata.parquet"
 INDEX_PATH = DATA_INDEX / "rbc_faiss.index"
 
-# Upgraded embedding model
-MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+# MiniLM embedding model (384-dim)
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 # -------------------------------------------------------
@@ -47,10 +55,10 @@ def build_faiss_index():
     metadata = pd.read_parquet(METADATA_PATH)
 
     print(f"Embeddings shape: {embeddings.shape}")
-    dim = embeddings.shape[1]  # Should be 768 for mpnet
+    dim = embeddings.shape[1]  # Should be 384 for MiniLM
 
     # ---------------------------------------------------
-    # Initialize FAISS index (cosine similarity)
+    # Initialize FAISS index
     # ---------------------------------------------------
     print("Creating FAISS index (cosine similarity)...")
     index = faiss.IndexFlatIP(dim)
@@ -58,7 +66,7 @@ def build_faiss_index():
     # Normalize vectors for cosine similarity
     faiss.normalize_L2(embeddings)
 
-    # Add vectors to the index
+    # Add vectors to FAISS
     index.add(embeddings)
     print(f"Added {index.ntotal} vectors to FAISS index")
 
@@ -67,7 +75,7 @@ def build_faiss_index():
     print(f"Saved FAISS index → {INDEX_PATH}")
 
     # ---------------------------------------------------
-    # Test retrieval using mpnet
+    # Test retrieval (MiniLM)
     # ---------------------------------------------------
     print("\nRunning test retrieval...")
     model = SentenceTransformer(MODEL_NAME)
@@ -75,7 +83,6 @@ def build_faiss_index():
     query = "How do I report a lost credit card?"
     print(f"Query: {query}")
 
-    # GPU-aware encoding
     query_emb = model.encode(
         [query],
         convert_to_numpy=True,
