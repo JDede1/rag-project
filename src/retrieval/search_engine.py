@@ -35,13 +35,11 @@ import pandas as pd
 IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
 
 if not IS_CLOUD:
-    # Local mode: HF allowed
     try:
         from sentence_transformers import SentenceTransformer
     except Exception:
         SentenceTransformer = None
 else:
-    # Cloud mode: HF import disabled
     SentenceTransformer = None
 
 
@@ -93,8 +91,16 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        # Use Docker WORKDIR
-        base_dir = Path("/app")
+
+        # =====================================================
+        # Correct path switching: Cloud Run → /app, Colab → repo root
+        # =====================================================
+        if IS_CLOUD:
+            base_dir = Path("/app")
+        else:
+            # search_engine.py → src/retrieval/ → repo root
+            base_dir = Path(__file__).resolve().parents[2]
+
         index_dir = base_dir / "data" / "index"
 
         self.index_path = index_dir / "rbc_faiss.index"
@@ -149,7 +155,11 @@ class RbcRetriever:
         except Exception:
             raise RuntimeError("ONNXRuntime missing. Add 'onnxruntime' to requirements.txt")
 
-        base_dir = Path("/app")
+        if IS_CLOUD:
+            base_dir = Path("/app")
+        else:
+            base_dir = Path(__file__).resolve().parents[2]
+
         onnx_dir = base_dir / "data" / "index"
 
         self.onnx_path = onnx_dir / "minilm.onnx"
