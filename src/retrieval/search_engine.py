@@ -1,23 +1,21 @@
 """
-Hybrid Search Engine — MiniLM (Local) and ONNX (Cloud)
+Hybrid Search Engine — MPNet (Local) and ONNX (Cloud)
 ---------------------------------------------------------------------------
 
 Modes:
 
     • Local (default)
-        - SentenceTransformer MiniLM encoder
-        - Requires HF + Torch installed locally
+        - SentenceTransformer MPNet encoder
+        - Uses HuggingFace model (768-dim)
 
     • Cloud Run (production)
-        - ONNX Runtime MiniLM encoder (no HuggingFace downloads)
-        - Uses tokenizer + ONNX files stored locally in /data/index
+        - ONNX Runtime MPNet encoder (same 768-dim)
+        - Loads ONNX + tokenizer from /app/data/index
 
 Mode selection:
 
-    - Cloud mode activates only when:
-            DEPLOY_ENV=cloud
-
-    - Otherwise local mode is used.
+    DEPLOY_ENV=cloud → Cloud Run ONNX mode
+    Default          → Local HF MPNet mode
 """
 
 import os
@@ -28,9 +26,8 @@ import faiss
 import numpy as np
 import pandas as pd
 
-
 # ---------------------------------------------------------
-# CLOUD / LOCAL mode detection
+# CLOUD / LOCAL detection
 # ---------------------------------------------------------
 IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
 
@@ -53,11 +50,10 @@ def _tokenize(text: str):
 
 
 # ---------------------------------------------------------
-# Topic classification
+# Topic classification rules
 # ---------------------------------------------------------
 def classify_chunk_topic(text: str) -> str:
     t = text.lower()
-
     if any(k in t for k in ["lost", "stolen", "misplaced", "block your card"]):
         return "lostcard"
     if any(k in t for k in ["fraud", "unauthorized", "dispute"]):
@@ -71,7 +67,6 @@ def classify_chunk_topic(text: str) -> str:
 
 def classify_query_topic(q: str) -> str:
     q = q.lower()
-
     if any(k in q for k in ["lost", "stolen", "misplaced"]):
         return "lostcard"
     if any(k in q for k in ["fraud", "unauthorized", "dispute"]):
@@ -91,12 +86,12 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        # Use Docker WORKDIR in cloud, repo root in local (Colab)
+
+        # Local = repo root
+        # Cloud = /app
         if IS_CLOUD:
-            # Cloud Run / Docker
             base_dir = Path("/app")
         else:
-            # Local: resolve from this file location
             base_dir = Path(__file__).resolve().parents[2]
 
         index_dir = base_dir / "data" / "index"
@@ -105,53 +100,53 @@ class RbcRetriever:
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
         if not self.index_path.exists():
-            raise FileNotFoundError(f"FAISS index not found: {self.index_path}")
+            raise FileNotFoundError(f"Missing FAISS index: {self.index_path}")
         if not self.meta_path.exists():
-            raise FileNotFoundError(f"Metadata parquet not found: {self.meta_path}")
+            raise FileNotFoundError(f"Missing metadata file: {self.meta_path}")
 
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
 
         self.faiss_dim = self.index.d
-        print(f"[Retriever] FAISS index loaded ({self.index.ntotal} vectors, dim={self.faiss_dim})")
+        print(f"[Retriever] Loaded FAISS index ({self.index.ntotal} vectors, dim={self.faiss_dim})")
 
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX MiniLM")
+            print("[Retriever] Cloud mode → ONNX MPNet")
             self._load_onnx_encoder()
         else:
-            print("[Retriever] Local mode → SentenceTransformer MiniLM")
+            print("[Retriever] Local mode → SentenceTransformer MPNet")
             self._load_local_encoder()
 
     # =========================================================
-    # LOCAL MiniLM encoder
+    # LOCAL MPNet encoder
     # =========================================================
     def _load_local_encoder(self):
-        if SentenceTransformer is None:
-            raise RuntimeError(
-                "SentenceTransformer unavailable.\n"
-                "Install: pip install sentence-transformers torch transformers"
-            )
 
-        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        if SentenceTransformer is None:
+            raise RuntimeError("SentenceTransformer missing. Install sentence-transformers + torch")
+
+        model_name = "sentence-transformers/all-mpnet-base-v2"
         self.model = SentenceTransformer(model_name)
 
+        # Validate embedding dimension
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}"
+                f"Local MPNet dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}\n"
+                "You MUST keep MPNet encoder since your FAISS index was built with MPNet."
             )
 
-        self.encoder_type = "minilm_local"
-        print("[Retriever] Local MiniLM loaded.")
+        self.encoder_type = "mpnet_local"
+        print("[Retriever] Local MPNet loaded.")
 
     # =========================================================
-    # CLOUD ONNX MiniLM encoder
+    # CLOUD: ONNX MPNet encoder
     # =========================================================
     def _load_onnx_encoder(self):
         try:
             import onnxruntime as ort
         except Exception:
-            raise RuntimeError("ONNXRuntime missing. Add 'onnxruntime' to requirements.txt")
+            raise RuntimeError("Missing onnxruntime. Add it to requirements.txt")
 
         if IS_CLOUD:
             base_dir = Path("/app")
@@ -160,13 +155,9 @@ class RbcRetriever:
 
         onnx_dir = base_dir / "data" / "index"
 
-        self.onnx_path = onnx_dir / "minilm.onnx"
+        self.onnx_path = onnx_dir / "mpnet.onnx"
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX model missing: {self.onnx_path}")
-
-        self.tokenizer_path = onnx_dir / "tokenizer.json"
-        if not self.tokenizer_path.exists():
-            raise FileNotFoundError(f"tokenizer.json missing: {self.tokenizer_path}")
 
         from transformers import AutoTokenizer
 
@@ -175,38 +166,37 @@ class RbcRetriever:
             local_files_only=True
         )
 
-        self.ort_session = ort.InferenceSession(
-            str(self.onnx_path),
-            providers=["CPUExecutionProvider"]
-        )
+        self.ort_session = ort.InferenceSession(str(self.onnx_path))
 
         dummy = self._encode_onnx_embeddings("test")
-        if dummy.ndim != 2 or dummy.shape[1] != self.faiss_dim:
+        if dummy.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"ONNX output dim {dummy.shape} != expected (*, {self.faiss_dim})"
+                f"ERROR: ONNX MPNet dim {dummy.shape[1]} != FAISS index dim {self.faiss_dim}"
             )
 
-        self.encoder_type = "minilm_onnx"
-        print("[Retriever] ONNX MiniLM loaded.")
+        self.encoder_type = "mpnet_onnx"
+        print("[Retriever] ONNX MPNet loaded.")
 
     # =========================================================
-    # ONNX embedding with mean pooling
+    # ONNX inference with mean pooling
     # =========================================================
     def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
+
         tokens = self.tokenizer(
             text,
             return_tensors="np",
             padding=True,
-            truncation=True
+            truncation=True,
+            max_length=256
         )
 
-        ort_inputs = {k: v for k, v in tokens.items()}
-        ort_out = self.ort_session.run(None, ort_inputs)[0]
+        ort_out = self.ort_session.run(None, tokens)[0]
 
-        emb = ort_out
-
-        if emb.ndim == 3:
-            emb = emb.mean(axis=1)
+        # Mean pool over sequence length
+        if ort_out.ndim == 3:
+            emb = ort_out.mean(axis=1)
+        else:
+            emb = ort_out
 
         if emb.ndim == 1:
             emb = np.expand_dims(emb, 0)
@@ -216,35 +206,29 @@ class RbcRetriever:
         return emb
 
     # =========================================================
-    # Main embedding function
+    # EMBEDDING FUNCTION
     # =========================================================
-    def embed_query(self, text: str) -> np.ndarray:
-        if not text:
-            raise ValueError("Query must be a non-empty string.")
-
-        if self.encoder_type == "minilm_onnx":
+    def embed_query(self, text: str):
+        if self.encoder_type == "mpnet_onnx":
             return self._encode_onnx_embeddings(text)
 
-        emb = self.model.encode(
-            [text],
-            convert_to_numpy=True,
-            show_progress_bar=False
-        ).astype(np.float32)
-
+        emb = self.model.encode([text], convert_to_numpy=True).astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
 
     # ---------------------------------------------------------
     # Reranking logic
     # ---------------------------------------------------------
-    def _rerank(self, query: str, results: list):
+    def _rerank(self, query, results):
+
         q_tokens = set(_tokenize(query))
         q_topic = classify_query_topic(query)
-        has_question_word = bool(q_tokens & QUESTION_WORDS)
+        has_q_word = bool(q_tokens & QUESTION_WORDS)
 
         reranked = []
 
         for i, r in enumerate(results):
+
             chunk = r["chunk"]
             chunk_topic = classify_chunk_topic(chunk)
 
@@ -252,9 +236,8 @@ class RbcRetriever:
             lexical_overlap = len(q_tokens & chunk_tokens)
 
             base = r["score"]
-
             lexical_boost = 0.12 * lexical_overlap
-            question_boost = 0.05 if has_question_word else 0.0
+            question_boost = 0.05 if has_q_word else 0
 
             if q_topic == chunk_topic:
                 topic_boost = 0.30
@@ -277,29 +260,27 @@ class RbcRetriever:
     # MAIN SEARCH
     # =========================================================
     def search(self, query: str, top_k: int = 5):
+
         if not query.strip():
-            raise ValueError("Query cannot be empty.")
+            raise ValueError("Empty query")
 
         RECALL_K = 30
-        q_emb = self.embed_query(query)
 
+        q_emb = self.embed_query(query)
         distances, indices = self.index.search(q_emb, RECALL_K)
 
         raw = []
         for score, idx in zip(distances[0], indices[0]):
             row = self.metadata.iloc[idx]
-
-            raw.append(
-                {
-                    "question": row.get("question", ""),
-                    "chunk": row.get("chunk", ""),
-                    "score": float(score),
-                    "url": row.get("url"),
-                    "source": row.get("source"),
-                    "retrieved_at": row.get("retrieved_at"),
-                    "source_faq_index": int(row.get("source_faq_index", -1)),
-                }
-            )
+            raw.append({
+                "question": row.get("question", ""),
+                "chunk": row.get("chunk", ""),
+                "score": float(score),
+                "url": row.get("url"),
+                "source": row.get("source"),
+                "retrieved_at": row.get("retrieved_at"),
+                "source_faq_index": int(row.get("source_faq_index", -1)),
+            })
 
         reranked = self._rerank(query, raw)
         clipped = reranked[:top_k]
@@ -307,26 +288,25 @@ class RbcRetriever:
         if len(clipped) >= 2:
             avg = (clipped[0]["final_score"] + clipped[1]["final_score"]) / 2
         else:
-            avg = clipped[0]["final_score"] if clipped else 0.0
+            avg = clipped[0]["final_score"]
 
         for r in clipped:
             r["confidence"] = float(avg)
 
         return clipped
 
-    # ---------------------------------------------------------
-    # Debug printer
-    # ---------------------------------------------------------
-    def pretty_print(self, query: str, top_k: int = 5):
+    # =========================================================
+    # Pretty printer
+    # =========================================================
+    def pretty_print(self, query, top_k=5):
         results = self.search(query, top_k)
         print(f"\nQuery: {query}\n")
-        for i, r in enumerate(results, 1):
-            print(f"{i}. ({r['final_score']:.4f}) [{r['topic']}] {r['question']}")
-            print(f"   Chunk: {r['chunk'][:150]}...")
-            print(f"   CIT: {r['citation_id']}\n")
+        for r in results:
+            print(f"{r['citation_id']}. [{r['topic']}] score={r['final_score']:.4f}")
+            print("   Q:", r["question"])
+            print("   Chunk:", r["chunk"][:150], "...\n")
 
 
 if __name__ == "__main__":
     retriever = RbcRetriever()
     retriever.pretty_print("How do I report a lost credit card?")
-
