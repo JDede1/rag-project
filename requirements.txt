@@ -25,9 +25,7 @@ faiss-cpu
 onnxruntime==1.17.0
 
 # ============================================================
-# Sentence Transformer (LOCAL ONLY)
-# Safe version for MPNet
-# Compatible with torch==2.1.2 and HF pinned versions
+# Sentence Transformers (Local Embeddings for MiniLM)
 # ============================================================
 sentence-transformers==2.2.2
 transformers==4.30.2
