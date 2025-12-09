@@ -1,22 +1,24 @@
 """
-MPNet → ONNX Export Script
-==========================
+MPNet → ONNX Export Script (Cloud-Run Compatible)
+================================================
 
-Exports the following to data/index/:
+This script exports an ONNX model fully compatible with the ONNXRuntime
+available inside Cloud Run. Cloud Run supports up to **IR version 9**,
+so we force an opset that guarantees IR ≤ 9.
+
+Output files saved to data/index/:
     • mpnet.onnx
     • tokenizer.json
     • tokenizer_config.json
     • special_tokens_map.json
     • config.json
 
-This ONNX model is used ONLY in Cloud Run (DEPLOY_ENV=cloud).
-Local mode continues to use the SentenceTransformer MPNet model.
-
-This script must be executed AFTER Phase 3 completes (index built).
+Run this AFTER Phase 3 (embeddings + index).
 """
 
 from pathlib import Path
 import torch
+import onnx
 from transformers import AutoModel, AutoTokenizer
 
 # ------------------------------------------------------------
@@ -30,56 +32,68 @@ ONNX_PATH = INDEX_DIR / "mpnet.onnx"
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 print("\n==========================================")
-print("     MPNet → ONNX Export (Cloud Mode)")
+print("   MPNet → ONNX Export (Cloud Run Safe)")
 print("==========================================\n")
 
 # ------------------------------------------------------------
-# 1. Load HF model + tokenizer
+# 1. Load model + tokenizer
 # ------------------------------------------------------------
 print(f"Loading HuggingFace MPNet model: {MODEL_NAME}")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
-model.eval()  # disable dropout
+model.eval()
 
-# Save tokenizer files to INDEX_DIR
 print("Saving tokenizer files...")
 tokenizer.save_pretrained(INDEX_DIR)
 
-# Also save model config.json explicitly
 print("Saving config.json...")
 model.config.to_json_file(INDEX_DIR / "config.json")
 
 # ------------------------------------------------------------
-# 2. Create dummy input for ONNX tracing
+# 2. Dummy input for tracing
 # ------------------------------------------------------------
-dummy_inputs = tokenizer(
+dummy = tokenizer(
     ["Dummy input for ONNX export"],
-    return_tensors="pt",
     padding=True,
     truncation=True,
     max_length=256,
+    return_tensors="pt",
 )
 
 # ------------------------------------------------------------
-# 3. Export ONNX model
+# 3. Export ONNX (opset 12 ensures IR v9 in Cloud Run)
 # ------------------------------------------------------------
 print(f"Exporting ONNX model → {ONNX_PATH}")
 
 torch.onnx.export(
     model,
-    (dummy_inputs["input_ids"], dummy_inputs["attention_mask"]),
+    (dummy["input_ids"], dummy["attention_mask"]),
     ONNX_PATH.as_posix(),
     input_names=["input_ids", "attention_mask"],
-    output_names=["last_hidden_state", "pooler_output"],
+    output_names=["last_hidden_state"],
     dynamic_axes={
         "input_ids": {0: "batch", 1: "sequence"},
         "attention_mask": {0: "batch", 1: "sequence"},
         "last_hidden_state": {0: "batch", 1: "sequence"},
-        "pooler_output": {0: "batch"},
     },
-    opset_version=18,  # stable opset, avoids converter errors
+    opset_version=12,   # Cloud Run safe → IR version 9
 )
+
+# ------------------------------------------------------------
+# 4. Validate ONNX IR version
+# ------------------------------------------------------------
+print("Validating generated ONNX IR version...")
+
+model_onnx = onnx.load(ONNX_PATH)
+print("  IR version:", model_onnx.ir_version)
+
+if model_onnx.ir_version > 9:
+    raise RuntimeError(
+        f"ONNX IR version {model_onnx.ir_version} > 9 — Cloud Run will reject this model."
+    )
+
+print("  ONNX model is Cloud Run–compatible (IR ≤ 9).")
 
 print("\nONNX Export Complete:")
 print(" - mpnet.onnx")
@@ -88,4 +102,4 @@ print(" - tokenizer_config.json")
 print(" - special_tokens_map.json")
 print(" - config.json")
 
-print("\nExport process finished successfully.\n")
+print("\nExport finished successfully.\n")
