@@ -95,7 +95,9 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 # =========================================================
 class RbcRetriever:
     def __init__(self):
-        base_dir = Path(__file__).resolve().parents[2]
+        # *** FIXED FOR CLOUD RUN ***
+        # Always use the Docker WORKDIR (/app)
+        base_dir = Path("/app")
         index_dir = base_dir / "data" / "index"
 
         self.index_path = index_dir / "rbc_faiss.index"
@@ -151,7 +153,8 @@ class RbcRetriever:
         except Exception:
             raise RuntimeError("ONNXRuntime missing. Add 'onnxruntime' to requirements.txt")
 
-        base_dir = Path(__file__).resolve().parents[2]
+        # *** FIXED FOR CLOUD RUN ***
+        base_dir = Path("/app")
         onnx_dir = base_dir / "data" / "index"
 
         self.onnx_path = onnx_dir / "mpnet.onnx"
@@ -174,7 +177,6 @@ class RbcRetriever:
             providers=["CPUExecutionProvider"]
         )
 
-        # Validate dimension using mean-pooled ONNX output
         dummy = self._encode_onnx_embeddings("test")
         if dummy.ndim != 2 or dummy.shape[1] != self.faiss_dim:
             raise ValueError(
@@ -198,14 +200,11 @@ class RbcRetriever:
         ort_inputs = {k: v for k, v in tokens.items()}
         ort_out = self.ort_session.run(None, ort_inputs)[0]
 
-        # ONNX output shape: (batch, seq_len, hidden)
         emb = ort_out
 
-        # Mean-pool across token axis → (batch, hidden)
         if emb.ndim == 3:
             emb = emb.mean(axis=1)
 
-        # Ensure batch dimension
         if emb.ndim == 1:
             emb = np.expand_dims(emb, 0)
 
