@@ -1,20 +1,36 @@
-# Python cache
+# ===============================
+# Python cache & artifacts
+# ===============================
 __pycache__/
 *.pyc
 
+# ===============================
 # Notebooks
+# ===============================
 *.ipynb
 .ipynb_checkpoints/
 
+# ===============================
 # Logs
+# ===============================
 logs/
 *.log
 
-# Virtual envs
+# ===============================
+# Virtual environments
+# ===============================
 .env/
 venv/
 
-# Ignore everything in data except index
-data/**
-!data/index/
-!data/index/**
+# ===============================
+# Data — Ignore all EXCEPT FAISS index
+# ===============================
+data/*
+!data/index
+!data/index/*
+
+# ===============================
+# Git files
+# ===============================
+.git/
+.gitignore
