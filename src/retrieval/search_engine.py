@@ -1,21 +1,20 @@
 """
-Hybrid Search Engine — MiniLM (Local) and ONNX (Cloud)
+Hybrid Search Engine — Dual MiniLM ONNX Support
 ------------------------------------------------------
 
 Modes:
 
     • Local (default)
         - SentenceTransformer MiniLM encoder
-        - 384-dimensional embeddings
+        - OR Local ONNX encoder (minilm_local.onnx, IR 10)
 
     • Cloud Run (production)
-        - ONNX Runtime MiniLM encoder
-        - Loads ONNX + tokenizer from /app/data/index
+        - Cloud-safe ONNX encoder (minilm.onnx, IR ≤ 9)
 
 Mode selection:
 
-    DEPLOY_ENV=cloud → Cloud Run ONNX mode
-    Default          → Local HF MiniLM mode
+    DEPLOY_ENV=cloud → Cloud Run ONNX mode (minilm.onnx)
+    Default          → Local ST MiniLM or local ONNX (minilm_local.onnx)
 """
 
 import os
@@ -25,7 +24,6 @@ from pathlib import Path
 import faiss
 import numpy as np
 import pandas as pd
-
 
 # ---------------------------------------------------------
 # CLOUD / LOCAL detection
@@ -41,18 +39,15 @@ else:
     SentenceTransformer = None
 
 
-# ---------------------------------------------------------
-# Tokenizer helper
-# ---------------------------------------------------------
 def _tokenize(text: str):
     if not text:
         return []
     return re.findall(r"\w+", text.lower())
 
 
-# ---------------------------------------------------------
-# Topic classification rules
-# ---------------------------------------------------------
+# ======================================================================
+# TOPIC CLASSIFICATION
+# ======================================================================
 def classify_chunk_topic(text: str) -> str:
     t = text.lower()
     if any(k in t for k in ["lost", "stolen", "misplaced", "block your card"]):
@@ -82,9 +77,9 @@ def classify_query_topic(q: str) -> str:
 QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "can"}
 
 
-# =========================================================
-# Hybrid Retriever
-# =========================================================
+# ======================================================================
+# HYBRID RETRIEVER
+# ======================================================================
 class RbcRetriever:
     def __init__(self):
 
@@ -97,7 +92,10 @@ class RbcRetriever:
 
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
-        self.onnx_path = index_dir / "minilm.onnx"
+
+        # NEW: Dual ONNX paths
+        self.onnx_path_cloud = index_dir / "minilm.onnx"           # Cloud-safe IR <= 9
+        self.onnx_path_local = index_dir / "minilm_local.onnx"     # Local IR 10 ONNX
 
         if not self.index_path.exists():
             raise FileNotFoundError(f"Missing FAISS index: {self.index_path}")
@@ -106,20 +104,27 @@ class RbcRetriever:
 
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
-
         self.faiss_dim = self.index.d
+
         print(f"[Retriever] Loaded FAISS index ({self.index.ntotal} vectors, dim={self.faiss_dim})")
 
+        # MODE SELECTION
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → ONNX MiniLM")
-            self._load_onnx_encoder()
-        else:
-            print("[Retriever] Local mode → SentenceTransformer MiniLM")
-            self._load_local_encoder()
+            print("[Retriever] Cloud mode → Cloud ONNX MiniLM (minilm.onnx)")
+            self._load_cloud_onnx_encoder()
 
-    # =========================================================
-    # LOCAL MiniLM encoder
-    # =========================================================
+        else:
+            # Local: prefer local ONNX if available
+            if self.onnx_path_local.exists():
+                print("[Retriever] Local mode → Local ONNX MiniLM (minilm_local.onnx)")
+                self._load_local_onnx_encoder()
+            else:
+                print("[Retriever] Local mode → SentenceTransformer MiniLM")
+                self._load_local_encoder()
+
+    # ==================================================================
+    # LOCAL ST MODE
+    # ==================================================================
     def _load_local_encoder(self):
 
         if SentenceTransformer is None:
@@ -128,65 +133,67 @@ class RbcRetriever:
         model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.model = SentenceTransformer(model_name)
 
-        # Validate embedding dimension (should be 384)
         test_emb = self.model.encode(["test"], convert_to_numpy=True)
         if test_emb.shape[1] != self.faiss_dim:
             raise ValueError(
-                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim} "
-                "You must rebuild FAISS using MiniLM embeddings."
+                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}"
             )
 
-        self.encoder_type = "minilm_local"
-        print("[Retriever] Local MiniLM loaded.")
+        self.encoder_type = "minilm_local_st"
+        print("[Retriever] SentenceTransformer MiniLM loaded.")
 
-    # =========================================================
-    # CLOUD: ONNX MiniLM encoder
-    # =========================================================
-    def _load_onnx_encoder(self):
-        try:
-            import onnxruntime as ort
-        except Exception:
-            raise RuntimeError("Missing onnxruntime. Add it to requirements.txt")
-
-        if IS_CLOUD:
-            base_dir = Path("/app")
-        else:
-            base_dir = Path(__file__).resolve().parents[2]
-
-        onnx_dir = base_dir / "data" / "index"
-
-        if not self.onnx_path.exists():
-            raise FileNotFoundError(f"ONNX model missing: {self.onnx_path}")
-
+    # ==================================================================
+    # CLOUD ONNX (IR <= 9)
+    # ==================================================================
+    def _load_cloud_onnx_encoder(self):
+        import onnxruntime as ort
         from transformers import AutoTokenizer
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            str(onnx_dir),
-            local_files_only=True
-        )
+        if not self.onnx_path_cloud.exists():
+            raise FileNotFoundError(f"Cloud ONNX missing: {self.onnx_path_cloud}")
 
-        self.ort_session = ort.InferenceSession(str(self.onnx_path))
+        onnx_dir = self.onnx_path_cloud.parent
+        self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir), local_files_only=True)
+        self.ort_session = ort.InferenceSession(str(self.onnx_path_cloud))
 
-        dummy = self._encode_onnx_embeddings("test")
-        if dummy.shape[1] != self.faiss_dim:
-            raise ValueError(
-                f"ERROR: ONNX MiniLM dim {dummy.shape[1]} != FAISS index dim {self.faiss_dim}"
-            )
+        emb = self._encode_onnx_embeddings("test")
+        if emb.shape[1] != self.faiss_dim:
+            raise ValueError("Cloud ONNX embedding dimension mismatch")
 
-        self.encoder_type = "minilm_onnx"
-        print("[Retriever] ONNX MiniLM loaded.")
+        self.encoder_type = "minilm_cloud_onnx"
+        print("[Retriever] Cloud ONNX MiniLM loaded.")
 
-    # =========================================================
-    # ONNX encoding with mean pooling
-    # =========================================================
+    # ==================================================================
+    # LOCAL ONNX (IR 10)
+    # ==================================================================
+    def _load_local_onnx_encoder(self):
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+
+        if not self.onnx_path_local.exists():
+            raise FileNotFoundError(f"Local ONNX missing: {self.onnx_path_local}")
+
+        onnx_dir = self.onnx_path_local.parent
+        self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir), local_files_only=True)
+        self.ort_session = ort.InferenceSession(str(self.onnx_path_local))
+
+        emb = self._encode_onnx_embeddings("test")
+        if emb.shape[1] != self.faiss_dim:
+            raise ValueError("Local ONNX embedding dimension mismatch")
+
+        self.encoder_type = "minilm_local_onnx"
+        print("[Retriever] Local ONNX MiniLM loaded.")
+
+    # ==================================================================
+    # ONNX encoding
+    # ==================================================================
     def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
-
         tokens = self.tokenizer(
             text,
             return_tensors="np",
             padding=True,
             truncation=True,
-            max_length=256
+            max_length=256,
         )
 
         ort_out = self.ort_session.run(None, tokens)[0]
@@ -196,28 +203,27 @@ class RbcRetriever:
         else:
             emb = ort_out
 
+        emb = emb.astype(np.float32)
         if emb.ndim == 1:
             emb = np.expand_dims(emb, 0)
 
-        emb = emb.astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
 
-    # =========================================================
-    # EMBEDDING FUNCTION
-    # =========================================================
+    # ==================================================================
+    # EMBEDDING ROUTER
+    # ==================================================================
     def embed_query(self, text: str):
-
-        if self.encoder_type == "minilm_onnx":
+        if "onnx" in self.encoder_type:
             return self._encode_onnx_embeddings(text)
 
         emb = self.model.encode([text], convert_to_numpy=True).astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
 
-    # ---------------------------------------------------------
-    # Reranking logic
-    # ---------------------------------------------------------
+    # ==================================================================
+    # RERANK
+    # ==================================================================
     def _rerank(self, query, results):
 
         q_tokens = set(_tokenize(query))
@@ -255,11 +261,10 @@ class RbcRetriever:
 
         return sorted(reranked, key=lambda x: x["final_score"], reverse=True)
 
-    # =========================================================
+    # ==================================================================
     # MAIN SEARCH
-    # =========================================================
+    # ==================================================================
     def search(self, query: str, top_k: int = 5):
-
         if not query.strip():
             raise ValueError("Empty query")
 
@@ -294,9 +299,9 @@ class RbcRetriever:
 
         return clipped
 
-    # =========================================================
-    # Pretty printer
-    # =========================================================
+    # ==================================================================
+    # PRINT
+    # ==================================================================
     def pretty_print(self, query, top_k=5):
         results = self.search(query, top_k)
         print(f"\nQuery: {query}\n")
