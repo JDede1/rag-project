@@ -14,7 +14,13 @@ Modes:
 Mode selection:
 
     DEPLOY_ENV=cloud → Cloud Run ONNX mode (minilm.onnx)
-    Default          → Local ST MiniLM or local ONNX (minilm_local.onnx)
+    DEPLOY_ENV=local → Local mode
+
+Optional override (local only):
+
+    ENCODER_MODE = minilm_local_onnx
+    ENCODER_MODE = minilm_cloud_onnx
+    ENCODER_MODE = minilm_hf
 """
 
 import os
@@ -26,10 +32,12 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------
-# CLOUD / LOCAL detection
+# ENVIRONMENT MODE
 # ---------------------------------------------------------
 IS_CLOUD = os.getenv("DEPLOY_ENV", "").lower() == "cloud"
+ENCODER_OVERRIDE = os.getenv("ENCODER_MODE", "").strip().lower()
 
+# sentence-transformers available only locally
 if not IS_CLOUD:
     try:
         from sentence_transformers import SentenceTransformer
@@ -83,6 +91,7 @@ QUESTION_WORDS = {"how", "what", "when", "where", "why", "who", "does", "do", "c
 class RbcRetriever:
     def __init__(self):
 
+        # root folder for index
         if IS_CLOUD:
             base_dir = Path("/app")
         else:
@@ -90,104 +99,138 @@ class RbcRetriever:
 
         index_dir = base_dir / "data" / "index"
 
+        # core index files
         self.index_path = index_dir / "rbc_faiss.index"
         self.meta_path = index_dir / "rbc_metadata.parquet"
 
-        # NEW: Dual ONNX paths
-        self.onnx_path_cloud = index_dir / "minilm.onnx"           # Cloud-safe IR <= 9
-        self.onnx_path_local = index_dir / "minilm_local.onnx"     # Local IR 10 ONNX
+        # ONNX variants
+        self.onnx_cloud = index_dir / "minilm.onnx"           # IR ≤ 9
+        self.onnx_local = index_dir / "minilm_local.onnx"     # IR 10 (local only)
 
+        # verify data exists
         if not self.index_path.exists():
             raise FileNotFoundError(f"Missing FAISS index: {self.index_path}")
         if not self.meta_path.exists():
             raise FileNotFoundError(f"Missing metadata file: {self.meta_path}")
 
+        # load index + metadata
         self.index = faiss.read_index(str(self.index_path))
         self.metadata = pd.read_parquet(self.meta_path)
         self.faiss_dim = self.index.d
 
-        print(f"[Retriever] Loaded FAISS index ({self.index.ntotal} vectors, dim={self.faiss_dim})")
+        print(
+            f"[Retriever] Loaded FAISS index "
+            f"({self.index.ntotal} vectors, dim={self.faiss_dim})"
+        )
 
-        # MODE SELECTION
+        # ============================
+        # SELECT MODE
+        # ============================
+
+        if ENCODER_OVERRIDE:
+            print(f"[Retriever] Manual override → {ENCODER_OVERRIDE}")
+            self._apply_manual_override(ENCODER_OVERRIDE)
+            return
+
         if IS_CLOUD:
-            print("[Retriever] Cloud mode → Cloud ONNX MiniLM (minilm.onnx)")
-            self._load_cloud_onnx_encoder()
-
+            print("[Retriever] Cloud mode → minilm.onnx (Cloud-safe IR ≤ 9)")
+            self._load_cloud_onnx()
         else:
-            # Local: prefer local ONNX if available
-            if self.onnx_path_local.exists():
-                print("[Retriever] Local mode → Local ONNX MiniLM (minilm_local.onnx)")
-                self._load_local_onnx_encoder()
+            if self.onnx_local.exists():
+                print("[Retriever] Local mode → minilm_local.onnx (IR 10)")
+                self._load_local_onnx()
             else:
-                print("[Retriever] Local mode → SentenceTransformer MiniLM")
-                self._load_local_encoder()
+                print("[Retriever] Local mode → HF MiniLM")
+                self._load_local_hf()
 
     # ==================================================================
-    # LOCAL ST MODE
+    # MANUAL OVERRIDE (optional)
     # ==================================================================
-    def _load_local_encoder(self):
+    def _apply_manual_override(self, mode: str):
+        mode = mode.lower()
+
+        if mode == "minilm_local_onnx":
+            self._load_local_onnx()
+        elif mode == "minilm_cloud_onnx":
+            self._load_cloud_onnx()
+        elif mode == "minilm_hf":
+            self._load_local_hf()
+        else:
+            raise ValueError(f"Unknown ENCODER_MODE override: {mode}")
+
+    # ==================================================================
+    # LOCAL HF MiniLM
+    # ==================================================================
+    def _load_local_hf(self):
 
         if SentenceTransformer is None:
-            raise RuntimeError("SentenceTransformer is not available.")
+            raise RuntimeError("SentenceTransformer unavailable.")
 
         model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.model = SentenceTransformer(model_name)
 
-        test_emb = self.model.encode(["test"], convert_to_numpy=True)
-        if test_emb.shape[1] != self.faiss_dim:
+        # check dimension
+        dim = self.model.encode(["test"], convert_to_numpy=True).shape[1]
+        if dim != self.faiss_dim:
             raise ValueError(
-                f"Local MiniLM dim {test_emb.shape[1]} != FAISS dim {self.faiss_dim}"
+                f"HF MiniLM dim {dim} != FAISS dim {self.faiss_dim} — rebuild FAISS."
             )
 
-        self.encoder_type = "minilm_local_st"
-        print("[Retriever] SentenceTransformer MiniLM loaded.")
+        self.encoder_type = "minilm_hf"
+        print("[Retriever] Loaded HF MiniLM.")
 
     # ==================================================================
-    # CLOUD ONNX (IR <= 9)
+    # CLOUD ONNX (IR ≤ 9)
     # ==================================================================
-    def _load_cloud_onnx_encoder(self):
+    def _load_cloud_onnx(self):
         import onnxruntime as ort
         from transformers import AutoTokenizer
 
-        if not self.onnx_path_cloud.exists():
-            raise FileNotFoundError(f"Cloud ONNX missing: {self.onnx_path_cloud}")
+        if not self.onnx_cloud.exists():
+            raise FileNotFoundError(f"Cloud ONNX missing: {self.onnx_cloud}")
 
-        onnx_dir = self.onnx_path_cloud.parent
+        onnx_dir = self.onnx_cloud.parent
         self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir), local_files_only=True)
-        self.ort_session = ort.InferenceSession(str(self.onnx_path_cloud))
+        self.ort = ort.InferenceSession(str(self.onnx_cloud))
 
-        emb = self._encode_onnx_embeddings("test")
-        if emb.shape[1] != self.faiss_dim:
-            raise ValueError("Cloud ONNX embedding dimension mismatch")
+        self._check_onnx_dim()
 
         self.encoder_type = "minilm_cloud_onnx"
-        print("[Retriever] Cloud ONNX MiniLM loaded.")
+        print("[Retriever] Loaded Cloud ONNX MiniLM.")
 
     # ==================================================================
     # LOCAL ONNX (IR 10)
     # ==================================================================
-    def _load_local_onnx_encoder(self):
+    def _load_local_onnx(self):
         import onnxruntime as ort
         from transformers import AutoTokenizer
 
-        if not self.onnx_path_local.exists():
-            raise FileNotFoundError(f"Local ONNX missing: {self.onnx_path_local}")
+        if not self.onnx_local.exists():
+            raise FileNotFoundError(f"Local ONNX missing: {self.onnx_local}")
 
-        onnx_dir = self.onnx_path_local.parent
+        onnx_dir = self.onnx_local.parent
         self.tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir), local_files_only=True)
-        self.ort_session = ort.InferenceSession(str(self.onnx_path_local))
+        self.ort = ort.InferenceSession(str(self.onnx_local))
 
-        emb = self._encode_onnx_embeddings("test")
-        if emb.shape[1] != self.faiss_dim:
-            raise ValueError("Local ONNX embedding dimension mismatch")
+        self._check_onnx_dim()
 
         self.encoder_type = "minilm_local_onnx"
-        print("[Retriever] Local ONNX MiniLM loaded.")
+        print("[Retriever] Loaded Local ONNX MiniLM.")
 
     # ==================================================================
-    # ONNX encoding
+    # ONNX DIMENSION CHECK
     # ==================================================================
-    def _encode_onnx_embeddings(self, text: str) -> np.ndarray:
+    def _check_onnx_dim(self):
+        emb = self._encode_onnx("test")
+        if emb.shape[1] != self.faiss_dim:
+            raise ValueError(
+                f"ONNX encoder dim {emb.shape[1]} != FAISS dim {self.faiss_dim}"
+            )
+
+    # ==================================================================
+    # ONNX ENCODING
+    # ==================================================================
+    def _encode_onnx(self, text: str) -> np.ndarray:
         tokens = self.tokenizer(
             text,
             return_tensors="np",
@@ -196,27 +239,26 @@ class RbcRetriever:
             max_length=256,
         )
 
-        ort_out = self.ort_session.run(None, tokens)[0]
+        out = self.ort.run(None, tokens)[0]
 
-        if ort_out.ndim == 3:
-            emb = ort_out.mean(axis=1)
-        else:
-            emb = ort_out
+        if out.ndim == 3:
+            out = out.mean(axis=1)
 
-        emb = emb.astype(np.float32)
-        if emb.ndim == 1:
-            emb = np.expand_dims(emb, 0)
+        out = out.astype(np.float32)
+        if out.ndim == 1:
+            out = np.expand_dims(out, 0)
 
-        faiss.normalize_L2(emb)
-        return emb
+        faiss.normalize_L2(out)
+        return out
 
     # ==================================================================
     # EMBEDDING ROUTER
     # ==================================================================
     def embed_query(self, text: str):
-        if "onnx" in self.encoder_type:
-            return self._encode_onnx_embeddings(text)
+        if self.encoder_type in {"minilm_cloud_onnx", "minilm_local_onnx"}:
+            return self._encode_onnx(text)
 
+        # HF mode
         emb = self.model.encode([text], convert_to_numpy=True).astype(np.float32)
         faiss.normalize_L2(emb)
         return emb
@@ -228,7 +270,7 @@ class RbcRetriever:
 
         q_tokens = set(_tokenize(query))
         q_topic = classify_query_topic(query)
-        has_q_word = bool(q_tokens & QUESTION_WORDS)
+        has_q = bool(q_tokens & QUESTION_WORDS)
 
         reranked = []
 
@@ -236,13 +278,12 @@ class RbcRetriever:
 
             chunk = r["chunk"]
             chunk_topic = classify_chunk_topic(chunk)
-
             chunk_tokens = set(_tokenize(chunk))
-            lexical_overlap = len(q_tokens & chunk_tokens)
+            lexical = len(q_tokens & chunk_tokens)
 
             base = r["score"]
-            lexical_boost = 0.12 * lexical_overlap
-            question_boost = 0.05 if has_q_word else 0
+            lexical_boost = 0.12 * lexical
+            q_boost = 0.05 if has_q else 0
 
             if q_topic == chunk_topic:
                 topic_boost = 0.30
@@ -251,7 +292,7 @@ class RbcRetriever:
             else:
                 topic_boost = 0
 
-            final = float(base + lexical_boost + question_boost + topic_boost)
+            final = float(base + lexical_boost + q_boost + topic_boost)
 
             r["final_score"] = final
             r["citation_id"] = i + 1
@@ -269,8 +310,8 @@ class RbcRetriever:
             raise ValueError("Empty query")
 
         RECALL_K = 30
-
         q_emb = self.embed_query(query)
+
         distances, indices = self.index.search(q_emb, RECALL_K)
 
         raw = []
