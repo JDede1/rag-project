@@ -1,38 +1,57 @@
-# ============================================================
-# Core Python Utilities
-# ============================================================
-pandas==2.3.2
+############################################################
+#   Production Requirements for RBC RAG System 
+#   - Cloud Run Compatible
+#   - Fully reproducible
+#   - No GPU dependencies
+#   - ONNX + FastAPI + FAISS + Streamlit
+############################################################
+
+# -------------------------
+# Core Python Libraries
+# -------------------------
 numpy==1.26.4
-pyarrow
-fastparquet
+pandas==2.2.2
+pyarrow==16.1.0
+fastparquet==2024.5.0
 
-# ============================================================
-# API + Server
-# ============================================================
-fastapi
-uvicorn[standard]
-requests
-python-dotenv
+# -------------------------
+# FastAPI Backend
+# -------------------------
+fastapi==0.110.0
+uvicorn==0.27.1
+python-multipart==0.0.9
+jinja2==3.1.3
 
-# ============================================================
-# FAISS + Vector Search
-# ============================================================
-faiss-cpu
+# -------------------------
+# Retrieval (FAISS + ONNX)
+# -------------------------
+faiss-cpu==1.7.4
+onnx==1.16.1
+onnxruntime==1.18.0
 
-# ============================================================
-# ONNX Runtime (Cloud Run Encoder)
-# ============================================================
-onnxruntime==1.17.0
+# -------------------------
+# Transformers + MiniLM
+# -------------------------
+transformers==4.38.2
+tokenizers==0.19.1
+sentence-transformers==2.6.1
 
-# ============================================================
-# Sentence Transformers (Local Embeddings for MiniLM)
-# ============================================================
-sentence-transformers==2.2.2
-transformers==4.30.2
-huggingface-hub==0.16.4
+# -------------------------
+# Scraper (Playwright)
+# NOTE: Playwright itself is installed at runtime
+# -------------------------
+beautifulsoup4==4.12.3
+markdownify==0.11.6
+tqdm==4.66.4
 
-# ============================================================
-# Streamlit Dashboard (Phase 7)
-# ============================================================
-streamlit
-plotly
+# -------------------------
+# Streamlit Monitoring
+# -------------------------
+streamlit==1.34.0
+plotly==5.20.0
+
+# -------------------------
+# Utilities
+# -------------------------
+requests==2.32.3
+PyYAML==6.0.1
