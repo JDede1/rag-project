@@ -126,45 +126,45 @@ Covers the entire lifecycle:
 flowchart TD
 
 %% ============================
-%%  USER → API → RETRIEVAL FLOW
+%%   USER → API → RETRIEVAL FLOW
 %% ============================
 
 A[User Query] --> B[FastAPI Backend]
 
-B --> C{DEPLOY_ENV}
+B --> C(DEPLOY_ENV Check)
 
 %% Local Mode (Colab)
-C -->|local| D1[PyTorch MiniLM Encoder<br/>Sentence-Transformers]
-D1 --> E1[FAISS Index<br/>Search Top-K]
-E1 --> F1[Context Filtering<br/>Clean + Focus]
+C -->|local| D1[MiniLM Encoder - PyTorch]
+D1 --> E1[FAISS Index Search - Top K]
+E1 --> F1[Context Filtering - Clean and Focus]
 
 %% Cloud Mode (Cloud Run)
-C -->|cloud| D2[ONNX MiniLM Encoder<br/>onnxruntime CPU]
-D2 --> E2[FAISS Index<br/>Search Top-K]
-E2 --> F2[Context Filtering<br/>Clean + Focus]
+C -->|cloud| D2[MiniLM Encoder - ONNX Runtime]
+D2 --> E2[FAISS Index Search - Top K]
+E2 --> F2[Context Filtering - Clean and Focus]
 
 %% Shared Generator
-F1 --> G[Strict Literal Generator<br/>(No LLM)]
+F1 --> G[Strict Literal Generator - No LLM]
 F2 --> G
 
-G --> H[Final Answer<br/>+ CIT:{id} Sources]
+G --> H[Final Answer with CIT References]
 
-H --> I[Monitoring Layer<br/>RAG Logger → JSONL Logs]
+H --> I[Monitoring Layer - RAG Logger]
 
-I --> J[Streamlit Dashboard<br/>Metrics • Latency • Alerts]
+I --> J[Streamlit Dashboard - Metrics and Alerts]
 
 %% ============================
-%% Deployment Pipeline
+%%   Deployment Pipeline
 %% ============================
 
-subgraph Cloud Deployment (Phase 9)
-    K[Dockerfile<br/>Python 3.11 CPU] --> L[Cloud Build<br/>Build Container]
-    L --> M[Artifact Registry<br/>Container Storage]
-    M --> N[Cloud Run<br/>Serverless Backend]
+subgraph Cloud_Deployment_Phase9
+    K[Dockerfile - Python 3.11 CPU] --> L[Cloud Build - Build Image]
+    L --> M[Artifact Registry - Store Image]
+    M --> N[Cloud Run - Deploy Backend]
 end
 
-%% For Live Testing in Colab
-B --> O[Cloudflare Tunnel<br/>HTTPS Public URL]
+%% Live Testing (Colab)
+B --> O[Cloudflare Tunnel - Public HTTPS URL]
 ```
 
 ---
@@ -605,3 +605,4 @@ All scraped data is:
 * free from personally identifiable information (PII)
 
 ---
+
